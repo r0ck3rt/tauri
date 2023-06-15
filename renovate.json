@@ -2,7 +2,7 @@
   "extends": ["config:base"],
   "schedule": "after 3am on Wednesday",
   "ignorePaths": [],
-  "labels": ["chore"],
+  "labels": ["type: chore"],
   "enabledManagers": ["cargo", "npm"],
   "cargo": {
     "enabled": true
@@ -69,14 +69,15 @@
     },
     {
       "enabled": true,
-      "paths": ["tooling/cli.rs/**"],
+      "paths": ["tooling/cli/**"],
       "groupName": "Tauri CLI",
       "groupSlug": "allTauriCLI",
       "commitMessagePrefix": "chore(deps)",
       "lockFileMaintenance": {
         "enabled": true
       },
-      "rebaseConflictedPrs": false
+      "rebaseConflictedPrs": false,
+      "matchManagers": ["cargo"]
     },
     {
       "enabled": true,
@@ -91,7 +92,7 @@
     },
     {
       "enabled": true,
-      "paths": ["tooling/cli.rs/node"],
+      "paths": ["tooling/cli/node"],
       "groupName": "Tauri JS CLI",
       "groupSlug": "allTauriJSCLI",
       "commitMessagePrefix": "chore(deps)",
@@ -105,17 +106,6 @@
       "paths": ["tooling/api/**"],
       "groupName": "Tauri API Definitions",
       "groupSlug": "allTauriAPIDefinitions",
-      "commitMessagePrefix": "chore(deps)",
-      "lockFileMaintenance": {
-        "enabled": true
-      },
-      "rebaseConflictedPrs": false
-    },
-    {
-      "enabled": true,
-      "paths": ["tooling/create-tauri-app/**"],
-      "groupName": "create-tauri-app",
-      "groupSlug": "allCTA",
       "commitMessagePrefix": "chore(deps)",
       "lockFileMaintenance": {
         "enabled": true

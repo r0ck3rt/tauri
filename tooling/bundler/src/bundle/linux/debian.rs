@@ -1,4 +1,5 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2016-2019 Cargo-Bundle developers <https://github.com/burtonageo/cargo-bundle>
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -24,18 +25,19 @@
 
 use super::super::common;
 use crate::Settings;
-
 use anyhow::Context;
-use heck::ToKebabCase;
-use image::{self, codecs::png::PngDecoder, GenericImageView, ImageDecoder};
+use handlebars::Handlebars;
+use heck::AsKebabCase;
+use image::{self, codecs::png::PngDecoder, ImageDecoder};
 use libflate::gzip;
-use std::process::{Command, Stdio};
+use log::info;
+use serde::Serialize;
 use walkdir::WalkDir;
 
 use std::{
   collections::BTreeSet,
   ffi::OsStr,
-  fs::{self, File},
+  fs::{self, read_to_string, File},
   io::{self, Write},
   path::{Path, PathBuf},
 };
@@ -56,6 +58,7 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
     "x86_64" => "amd64",
     // ARM64 is detected differently, armel isn't supported, so armhf is the only reasonable choice here.
     "arm" => "armhf",
+    "aarch64" => "arm64",
     other => other,
   };
   let package_base_name = format!(
@@ -64,15 +67,17 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
     settings.version_string(),
     arch
   );
-  let package_name = format!("{}.deb", package_base_name);
-  common::print_bundling(&package_name)?;
+  let package_name = format!("{package_base_name}.deb");
+
   let base_dir = settings.project_out_directory().join("bundle/deb");
   let package_dir = base_dir.join(&package_base_name);
   if package_dir.exists() {
     fs::remove_dir_all(&package_dir)
-      .with_context(|| format!("Failed to remove old {}", package_base_name))?;
+      .with_context(|| format!("Failed to remove old {package_base_name}"))?;
   }
-  let package_path = base_dir.join(package_name);
+  let package_path = base_dir.join(&package_name);
+
+  info!(action = "Bundling"; "{} ({})", package_name, package_path.display());
 
   let (data_dir, _) = generate_data(settings, &package_dir)
     .with_context(|| "Failed to build data folders and files")?;
@@ -114,8 +119,8 @@ pub fn generate_data(
 
   for bin in settings.binaries() {
     let bin_path = settings.binary_path(bin);
-    common::copy_file(&bin_path, &bin_dir.join(bin.name()))
-      .with_context(|| format!("Failed to copy binary from {:?}", bin_path))?;
+    common::copy_file(&bin_path, bin_dir.join(bin.name()))
+      .with_context(|| format!("Failed to copy binary from {bin_path:?}"))?;
   }
 
   copy_resource_files(settings, &data_dir).with_context(|| "Failed to copy resource files")?;
@@ -128,113 +133,61 @@ pub fn generate_data(
     generate_icon_files(settings, &data_dir).with_context(|| "Failed to create icon files")?;
   generate_desktop_file(settings, &data_dir).with_context(|| "Failed to create desktop file")?;
 
-  let use_bootstrapper = settings.deb().use_bootstrapper.unwrap_or_default();
-  if use_bootstrapper {
-    generate_bootstrap_file(settings, &data_dir)
-      .with_context(|| "Failed to generate bootstrap file")?;
-  }
-
   Ok((data_dir, icons))
-}
-
-/// Generates the bootstrap script file.
-fn generate_bootstrap_file(settings: &Settings, data_dir: &Path) -> crate::Result<()> {
-  let bin_name = settings.main_binary_name();
-  let bin_dir = data_dir.join("usr/bin");
-
-  let bootstrap_file_name = format!("__{}-bootstrapper", bin_name);
-  let bootstrapper_file_path = bin_dir.join(bootstrap_file_name.clone());
-  let bootstrapper_file = &mut common::create_file(&bootstrapper_file_path)?;
-  write!(
-    bootstrapper_file,
-    "#!/usr/bin/env sh
-# This bootstraps the environment for Tauri, so environments are available.
-export NVM_DIR=\"$([ -z \"${{XDG_CONFIG_HOME-}}\" ] && printf %s \"${{HOME}}/.nvm\" || printf %s \"${{XDG_CONFIG_HOME}}/nvm\")\"
-[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"
-
-if [ -e ~/.bash_profile ]
-then
-    source ~/.bash_profile
-fi
-if [ -e ~/.zprofile ]
-then
-    source ~/.zprofile
-fi
-if [ -e ~/.profile ]
-then
-    source ~/.profile
-fi
-if [ -e ~/.bashrc ]
-then
-    source ~/.bashrc
-fi
-if [ -e ~/.zshrc ]
-then
-    source ~/.zshrc
-fi
-
-echo $PATH
-
-source /etc/profile
-
-if pidof -x \"{}\" >/dev/null; then
-    exit 0
-else
-    Exec=/usr/bin/env /usr/bin/{} $@ & disown
-fi
-exit 0",
-    bootstrap_file_name, bin_name
-  )?;
-  bootstrapper_file.flush()?;
-
-  let status = Command::new("chmod")
-    .arg("+x")
-    .arg(bootstrap_file_name)
-    .current_dir(&bin_dir)
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .status()?;
-
-  if !status.success() {
-    return Err(anyhow::anyhow!("failed to make the bootstrapper an executable",).into());
-  }
-
-  Ok(())
 }
 
 /// Generate the application desktop file and store it under the `data_dir`.
 fn generate_desktop_file(settings: &Settings, data_dir: &Path) -> crate::Result<()> {
   let bin_name = settings.main_binary_name();
-  let desktop_file_name = format!("{}.desktop", bin_name);
+  let desktop_file_name = format!("{bin_name}.desktop");
   let desktop_file_path = data_dir
     .join("usr/share/applications")
     .join(desktop_file_name);
-  let file = &mut common::create_file(&desktop_file_path)?;
+
   // For more information about the format of this file, see
   // https://developer.gnome.org/integration-guide/stable/desktop-files.html.en
-  writeln!(file, "[Desktop Entry]")?;
-  if let Some(category) = settings.app_category() {
-    writeln!(file, "Categories={}", category.gnome_desktop_categories())?;
+  let file = &mut common::create_file(&desktop_file_path)?;
+
+  let mut handlebars = Handlebars::new();
+  handlebars.register_escape_fn(handlebars::no_escape);
+  if let Some(template) = &settings.deb().desktop_template {
+    handlebars
+      .register_template_string("main.desktop", read_to_string(template)?)
+      .with_context(|| "Failed to setup custom handlebar template")?;
   } else {
-    writeln!(file, "Categories=")?;
+    handlebars
+      .register_template_string("main.desktop", include_str!("./templates/main.desktop"))
+      .with_context(|| "Failed to setup custom handlebar template")?;
   }
-  if !settings.short_description().is_empty() {
-    writeln!(file, "Comment={}", settings.short_description())?;
+
+  #[derive(Serialize)]
+  struct DesktopTemplateParams<'a> {
+    categories: &'a str,
+    comment: Option<&'a str>,
+    exec: &'a str,
+    icon: &'a str,
+    name: &'a str,
   }
-  let use_bootstrapper = settings.deb().use_bootstrapper.unwrap_or_default();
-  writeln!(
+
+  handlebars.render_to_write(
+    "main.desktop",
+    &DesktopTemplateParams {
+      categories: settings
+        .app_category()
+        .map(|app_category| app_category.gnome_desktop_categories())
+        .unwrap_or(""),
+      comment: if !settings.short_description().is_empty() {
+        Some(settings.short_description())
+      } else {
+        None
+      },
+      exec: bin_name,
+      icon: bin_name,
+      name: settings.product_name(),
+    },
     file,
-    "Exec={}",
-    if use_bootstrapper {
-      format!("__{}-bootstrapper", bin_name)
-    } else {
-      bin_name.to_string()
-    }
   )?;
-  writeln!(file, "Icon={}", bin_name)?;
-  writeln!(file, "Name={}", settings.product_name())?;
-  writeln!(file, "Terminal=false")?;
-  writeln!(file, "Type=Application")?;
+
   Ok(())
 }
 
@@ -249,17 +202,13 @@ fn generate_control_file(
   // https://www.debian.org/doc/debian-policy/ch-controlfields.html
   let dest_path = control_dir.join("control");
   let mut file = common::create_file(&dest_path)?;
-  writeln!(
-    file,
-    "Package: {}",
-    settings.product_name().to_kebab_case().to_ascii_lowercase()
-  )?;
+  writeln!(file, "Package: {}", AsKebabCase(settings.product_name()))?;
   writeln!(file, "Version: {}", settings.version_string())?;
-  writeln!(file, "Architecture: {}", arch)?;
+  writeln!(file, "Architecture: {arch}")?;
   // Installed-Size must be divided by 1024, see https://www.debian.org/doc/debian-policy/ch-controlfields.html#installed-size
   writeln!(file, "Installed-Size: {}", total_dir_size(data_dir)? / 1024)?;
   let authors = settings.authors_comma_separated().unwrap_or_default();
-  writeln!(file, "Maintainer: {}", authors)?;
+  writeln!(file, "Maintainer: {authors}")?;
   if !settings.homepage_url().is_empty() {
     writeln!(file, "Homepage: {}", settings.homepage_url())?;
   }
@@ -275,15 +224,16 @@ fn generate_control_file(
   if long_description.is_empty() {
     long_description = "(none)";
   }
-  writeln!(file, "Description: {}", short_description)?;
+  writeln!(file, "Description: {short_description}")?;
   for line in long_description.lines() {
     let line = line.trim();
     if line.is_empty() {
       writeln!(file, " .")?;
     } else {
-      writeln!(file, " {}", line)?;
+      writeln!(file, " {line}")?;
     }
   }
+  writeln!(file, "Priority: optional")?;
   file.flush()?;
   Ok(())
 }
@@ -303,14 +253,14 @@ fn generate_md5sums(control_dir: &Path, data_dir: &Path) -> crate::Result<()> {
     let mut hash = md5::Context::new();
     io::copy(&mut file, &mut hash)?;
     for byte in hash.compute().iter() {
-      write!(md5sums_file, "{:02x}", byte)?;
+      write!(md5sums_file, "{byte:02x}")?;
     }
     let rel_path = path.strip_prefix(data_dir)?;
     let path_str = rel_path.to_str().ok_or_else(|| {
-      let msg = format!("Non-UTF-8 path: {:?}", rel_path);
+      let msg = format!("Non-UTF-8 path: {rel_path:?}");
       io::Error::new(io::ErrorKind::InvalidData, msg)
     })?;
-    writeln!(md5sums_file, "  {}", path_str)?;
+    writeln!(md5sums_file, "  {path_str}")?;
   }
   Ok(())
 }
@@ -334,10 +284,10 @@ fn copy_custom_files(settings: &Settings, data_dir: &Path) -> crate::Result<()> 
       common::copy_file(path, data_dir.join(deb_path))?;
     } else {
       let out_dir = data_dir.join(deb_path);
-      for entry in walkdir::WalkDir::new(&path) {
+      for entry in walkdir::WalkDir::new(path) {
         let entry_path = entry?.into_path();
         if entry_path.is_file() {
-          let without_prefix = entry_path.strip_prefix(&path).unwrap();
+          let without_prefix = entry_path.strip_prefix(path).unwrap();
           common::copy_file(&entry_path, out_dir.join(without_prefix))?;
         }
       }
@@ -354,75 +304,33 @@ fn generate_icon_files(settings: &Settings, data_dir: &Path) -> crate::Result<BT
       "{}x{}{}/apps/{}.png",
       width,
       height,
-      if is_high_density { "@2x" } else { "" },
+      if is_high_density { "@2" } else { "" },
       settings.main_binary_name()
     ))
   };
   let mut icons = BTreeSet::new();
-  // Prefer PNG files.
   for icon_path in settings.icon_files() {
     let icon_path = icon_path?;
     if icon_path.extension() != Some(OsStr::new("png")) {
       continue;
     }
-    let decoder = PngDecoder::new(File::open(&icon_path)?)?;
-    let width = decoder.dimensions().0;
-    let height = decoder.dimensions().1;
-    let is_high_density = common::is_retina(&icon_path);
-    let dest_path = get_dest_path(width, height, is_high_density);
-    let deb_icon = DebIcon {
-      width,
-      height,
-      is_high_density,
-      path: dest_path,
-    };
-    if !icons.contains(&deb_icon) {
-      common::copy_file(&icon_path, &deb_icon.path)?;
-      icons.insert(deb_icon);
-    }
-  }
-  // Fall back to non-PNG files for any missing sizes.
-  for icon_path in settings.icon_files() {
-    let icon_path = icon_path?;
-    if icon_path.extension() == Some(OsStr::new("png")) {
-      continue;
-    } else if icon_path.extension() == Some(OsStr::new("icns")) {
-      let icon_family = icns::IconFamily::read(File::open(&icon_path)?)?;
-      for icon_type in icon_family.available_icons() {
-        let width = icon_type.screen_width();
-        let height = icon_type.screen_height();
-        let is_high_density = icon_type.pixel_density() > 1;
-        let dest_path = get_dest_path(width, height, is_high_density);
-        let deb_icon = DebIcon {
-          width,
-          height,
-          is_high_density,
-          path: dest_path,
-        };
-        if !icons.contains(&deb_icon) {
-          let icon = icon_family.get_icon_with_type(icon_type)?;
-          icon.write_png(common::create_file(&deb_icon.path)?)?;
-          icons.insert(deb_icon);
-        }
-      }
-    } else {
-      let icon = image::open(&icon_path)?;
-      let (width, height) = icon.dimensions();
+    // Put file in scope so that it's closed when copying it
+    let deb_icon = {
+      let decoder = PngDecoder::new(File::open(&icon_path)?)?;
+      let width = decoder.dimensions().0;
+      let height = decoder.dimensions().1;
       let is_high_density = common::is_retina(&icon_path);
       let dest_path = get_dest_path(width, height, is_high_density);
-      let deb_icon = DebIcon {
+      DebIcon {
         width,
         height,
         is_high_density,
         path: dest_path,
-      };
-      if !icons.contains(&deb_icon) {
-        icon.write_to(
-          &mut common::create_file(&deb_icon.path)?,
-          image::ImageOutputFormat::Png,
-        )?;
-        icons.insert(deb_icon);
       }
+    };
+    if !icons.contains(&deb_icon) {
+      common::copy_file(&icon_path, &deb_icon.path)?;
+      icons.insert(deb_icon);
     }
   }
   Ok(icons)
@@ -441,7 +349,7 @@ fn create_file_with_data<P: AsRef<Path>>(path: P, data: &str) -> crate::Result<(
 /// contents.
 fn total_dir_size(dir: &Path) -> crate::Result<u64> {
   let mut total: u64 = 0;
-  for entry in WalkDir::new(&dir) {
+  for entry in WalkDir::new(dir) {
     total += entry?.metadata()?.len();
   }
   Ok(total)
@@ -451,13 +359,13 @@ fn total_dir_size(dir: &Path) -> crate::Result<u64> {
 fn create_tar_from_dir<P: AsRef<Path>, W: Write>(src_dir: P, dest_file: W) -> crate::Result<W> {
   let src_dir = src_dir.as_ref();
   let mut tar_builder = tar::Builder::new(dest_file);
-  for entry in WalkDir::new(&src_dir) {
+  for entry in WalkDir::new(src_dir) {
     let entry = entry?;
     let src_path = entry.path();
     if src_path == src_dir {
       continue;
     }
-    let dest_path = src_path.strip_prefix(&src_dir)?;
+    let dest_path = src_path.strip_prefix(src_dir)?;
     if entry.file_type().is_dir() {
       tar_builder.append_dir(dest_path, src_path)?;
     } else {

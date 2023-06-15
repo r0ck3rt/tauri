@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -7,36 +7,65 @@
 pub(crate) mod menu;
 
 pub use menu::{MenuEvent, MenuHandle};
+pub use tauri_utils::{config::Color, WindowEffect as Effect, WindowEffectState as EffectState};
+use url::Url;
 
+#[cfg(target_os = "macos")]
+use crate::TitleBarStyle;
 use crate::{
+  api::ipc::CallbackFn,
   app::AppHandle,
   command::{CommandArg, CommandItem},
   event::{Event, EventHandler},
   hooks::{InvokePayload, InvokeResponder},
   manager::WindowManager,
   runtime::{
+    http::{Request as HttpRequest, Response as HttpResponse},
     monitor::Monitor as RuntimeMonitor,
-    webview::{WebviewAttributes, WindowBuilder},
+    webview::{WebviewAttributes, WindowBuilder as _},
     window::{
-      dpi::{PhysicalPosition, PhysicalSize, Position, Size},
-      DetachedWindow, JsEventListenerKey, PendingWindow, WindowEvent,
+      dpi::{PhysicalPosition, PhysicalSize},
+      DetachedWindow, PendingWindow,
     },
-    Dispatch, Icon, Runtime, UserAttentionType,
+    Dispatch, RuntimeHandle,
   },
   sealed::ManagerBase,
   sealed::RuntimeOrDispatch,
-  utils::config::WindowUrl,
-  Invoke, InvokeError, InvokeMessage, InvokeResolver, Manager, PageLoadPayload,
+  utils::config::{WindowConfig, WindowEffectsConfig, WindowUrl},
+  EventLoopMessage, Invoke, InvokeError, InvokeMessage, InvokeResolver, Manager, PageLoadPayload,
+  Runtime, Theme, WindowEvent,
+};
+#[cfg(desktop)]
+use crate::{
+  runtime::{
+    menu::Menu,
+    window::dpi::{Position, Size},
+    UserAttentionType,
+  },
+  CursorIcon, Icon,
 };
 
 use serde::Serialize;
+#[cfg(windows)]
+use windows::Win32::Foundation::HWND;
 
 use tauri_macros::default_runtime;
 
 use std::{
+  collections::{HashMap, HashSet},
+  fmt,
   hash::{Hash, Hasher},
-  sync::Arc,
+  path::PathBuf,
+  sync::{Arc, Mutex},
 };
+
+pub(crate) type WebResourceRequestHandler = dyn Fn(&HttpRequest, &mut HttpResponse) + Send + Sync;
+pub(crate) type NavigationHandler = dyn Fn(Url) -> bool + Send;
+
+#[derive(Clone, Serialize)]
+struct WindowCreatedEvent {
+  label: String,
+}
 
 /// Monitor descriptor.
 #[derive(Debug, Clone, Serialize)]
@@ -82,6 +111,658 @@ impl Monitor {
   }
 }
 
+/// A builder for a webview window managed by Tauri.
+#[default_runtime(crate::Wry, wry)]
+pub struct WindowBuilder<'a, R: Runtime> {
+  manager: WindowManager<R>,
+  runtime: RuntimeOrDispatch<'a, R>,
+  app_handle: AppHandle<R>,
+  label: String,
+  pub(crate) window_builder: <R::Dispatcher as Dispatch<EventLoopMessage>>::WindowBuilder,
+  pub(crate) webview_attributes: WebviewAttributes,
+  web_resource_request_handler: Option<Box<WebResourceRequestHandler>>,
+  navigation_handler: Option<Box<NavigationHandler>>,
+}
+
+impl<'a, R: Runtime> fmt::Debug for WindowBuilder<'a, R> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("WindowBuilder")
+      .field("manager", &self.manager)
+      .field("app_handle", &self.app_handle)
+      .field("label", &self.label)
+      .field("window_builder", &self.window_builder)
+      .field("webview_attributes", &self.webview_attributes)
+      .finish()
+  }
+}
+
+impl<'a, R: Runtime> WindowBuilder<'a, R> {
+  /// Initializes a webview window builder with the given window label and URL to load on the webview.
+  ///
+  /// # Known issues
+  ///
+  /// On Windows, this function deadlocks when used in a synchronous command, see [the Webview2 issue].
+  /// You should use `async` commands when creating windows.
+  ///
+  /// # Examples
+  ///
+  /// - Create a window in the setup hook:
+  ///
+  /// ```
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     let window = tauri::WindowBuilder::new(app, "label", tauri::WindowUrl::App("index.html".into()))
+  ///       .build()?;
+  ///     Ok(())
+  ///   });
+  /// ```
+  ///
+  /// - Create a window in a separate thread:
+  ///
+  /// ```
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     let handle = app.handle();
+  ///     std::thread::spawn(move || {
+  ///       let window = tauri::WindowBuilder::new(&handle, "label", tauri::WindowUrl::App("index.html".into()))
+  ///         .build()
+  ///         .unwrap();
+  ///     });
+  ///     Ok(())
+  ///   });
+  /// ```
+  ///
+  /// - Create a window in a command:
+  ///
+  /// ```
+  /// #[tauri::command]
+  /// async fn create_window(app: tauri::AppHandle) {
+  ///   let window = tauri::WindowBuilder::new(&app, "label", tauri::WindowUrl::External("https://tauri.app/".parse().unwrap()))
+  ///     .build()
+  ///     .unwrap();
+  /// }
+  /// ```
+  ///
+  /// [the Webview2 issue]: https://github.com/tauri-apps/wry/issues/583
+  pub fn new<M: Manager<R>, L: Into<String>>(manager: &'a M, label: L, url: WindowUrl) -> Self {
+    let runtime = manager.runtime();
+    let app_handle = manager.app_handle();
+    Self {
+      manager: manager.manager().clone(),
+      runtime,
+      app_handle,
+      label: label.into(),
+      window_builder: <R::Dispatcher as Dispatch<EventLoopMessage>>::WindowBuilder::new(),
+      webview_attributes: WebviewAttributes::new(url),
+      web_resource_request_handler: None,
+      navigation_handler: None,
+    }
+  }
+
+  /// Initializes a webview window builder from a window config from tauri.conf.json.
+  /// Keep in mind that you can't create 2 windows with the same `label` so make sure
+  /// that the initial window was closed or change the label of the new `WindowBuilder`.
+  ///
+  /// # Known issues
+  ///
+  /// On Windows, this function deadlocks when used in a synchronous command, see [the Webview2 issue].
+  /// You should use `async` commands when creating windows.
+  ///
+  /// # Examples
+  ///
+  /// - Create a window in a command:
+  ///
+  /// ```
+  /// #[tauri::command]
+  /// async fn reopen_window(app: tauri::AppHandle) {
+  ///   let window = tauri::WindowBuilder::from_config(&app, app.config().tauri.windows.get(0).unwrap().clone())
+  ///     .build()
+  ///     .unwrap();
+  /// }
+  /// ```
+  ///
+  /// [the Webview2 issue]: https://github.com/tauri-apps/wry/issues/583
+  pub fn from_config<M: Manager<R>>(manager: &'a M, config: WindowConfig) -> Self {
+    let builder = Self {
+      manager: manager.manager().clone(),
+      runtime: manager.runtime(),
+      app_handle: manager.app_handle(),
+      label: config.label.clone(),
+      webview_attributes: WebviewAttributes::from(&config),
+      window_builder: <R::Dispatcher as Dispatch<EventLoopMessage>>::WindowBuilder::with_config(
+        config,
+      ),
+      web_resource_request_handler: None,
+      navigation_handler: None,
+    };
+
+    builder
+  }
+
+  /// Defines a closure to be executed when the webview makes an HTTP request for a web resource, allowing you to modify the response.
+  ///
+  /// Currently only implemented for the `tauri` URI protocol.
+  ///
+  /// **NOTE:** Currently this is **not** executed when using external URLs such as a development server,
+  /// but it might be implemented in the future. **Always** check the request URL.
+  ///
+  /// # Examples
+  ///
+  /// ```rust,no_run
+  /// use tauri::{
+  ///   utils::config::{Csp, CspDirectiveSources, WindowUrl},
+  ///   http::header::HeaderValue,
+  ///   window::WindowBuilder,
+  /// };
+  /// use std::collections::HashMap;
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     WindowBuilder::new(app, "core", WindowUrl::App("index.html".into()))
+  ///       .on_web_resource_request(|request, response| {
+  ///         if request.uri().starts_with("tauri://") {
+  ///           // if we have a CSP header, Tauri is loading an HTML file
+  ///           //  for this example, let's dynamically change the CSP
+  ///           if let Some(csp) = response.headers_mut().get_mut("Content-Security-Policy") {
+  ///             // use the tauri helper to parse the CSP policy to a map
+  ///             let mut csp_map: HashMap<String, CspDirectiveSources> = Csp::Policy(csp.to_str().unwrap().to_string()).into();
+  ///             csp_map.entry("script-src".to_string()).or_insert_with(Default::default).push("'unsafe-inline'");
+  ///             // use the tauri helper to get a CSP string from the map
+  ///             let csp_string = Csp::from(csp_map).to_string();
+  ///             *csp = HeaderValue::from_str(&csp_string).unwrap();
+  ///           }
+  ///         }
+  ///       })
+  ///       .build()?;
+  ///     Ok(())
+  ///   });
+  /// ```
+  pub fn on_web_resource_request<F: Fn(&HttpRequest, &mut HttpResponse) + Send + Sync + 'static>(
+    mut self,
+    f: F,
+  ) -> Self {
+    self.web_resource_request_handler.replace(Box::new(f));
+    self
+  }
+
+  /// Defines a closure to be executed when the webview navigates to a URL. Returning `false` cancels the navigation.
+  ///
+  /// # Examples
+  ///
+  /// ```rust,no_run
+  /// use tauri::{
+  ///   utils::config::{Csp, CspDirectiveSources, WindowUrl},
+  ///   http::header::HeaderValue,
+  ///   window::WindowBuilder,
+  /// };
+  /// use std::collections::HashMap;
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     WindowBuilder::new(app, "core", WindowUrl::App("index.html".into()))
+  ///       .on_navigation(|url| {
+  ///         // allow the production URL or localhost on dev
+  ///         url.scheme() == "tauri" || (cfg!(dev) && url.host_str() == Some("localhost"))
+  ///       })
+  ///       .build()?;
+  ///     Ok(())
+  ///   });
+  /// ```
+  pub fn on_navigation<F: Fn(Url) -> bool + Send + 'static>(mut self, f: F) -> Self {
+    self.navigation_handler.replace(Box::new(f));
+    self
+  }
+
+  /// Creates a new webview window.
+  pub fn build(mut self) -> crate::Result<Window<R>> {
+    let mut pending = PendingWindow::new(
+      self.window_builder.clone(),
+      self.webview_attributes.clone(),
+      self.label.clone(),
+    )?;
+    pending.navigation_handler = self.navigation_handler.take();
+    pending.web_resource_request_handler = self.web_resource_request_handler.take();
+
+    let labels = self.manager.labels().into_iter().collect::<Vec<_>>();
+    let pending = self
+      .manager
+      .prepare_window(self.app_handle.clone(), pending, &labels)?;
+    let window_effects = pending.webview_attributes.window_effects.clone();
+    let window = match &mut self.runtime {
+      RuntimeOrDispatch::Runtime(runtime) => runtime.create_window(pending),
+      RuntimeOrDispatch::RuntimeHandle(handle) => handle.create_window(pending),
+      RuntimeOrDispatch::Dispatch(dispatcher) => dispatcher.create_window(pending),
+    }
+    .map(|window| self.manager.attach_window(self.app_handle.clone(), window))?;
+
+    if let Some(effects) = window_effects {
+      crate::vibrancy::set_window_effects(&window, Some(effects))?;
+    }
+    self.manager.eval_script_all(format!(
+      "window.__TAURI_METADATA__.__windows = {window_labels_array}.map(function (label) {{ return {{ label: label }} }})",
+      window_labels_array = serde_json::to_string(&self.manager.labels())?,
+    ))?;
+
+    self.manager.emit_filter(
+      "tauri://window-created",
+      None,
+      Some(WindowCreatedEvent {
+        label: window.label().into(),
+      }),
+      |w| w != &window,
+    )?;
+
+    Ok(window)
+  }
+}
+
+/// Desktop APIs.
+#[cfg(desktop)]
+impl<'a, R: Runtime> WindowBuilder<'a, R> {
+  /// Sets the menu for the window.
+  #[must_use]
+  pub fn menu(mut self, menu: Menu) -> Self {
+    self.window_builder = self.window_builder.menu(menu);
+    self
+  }
+
+  /// Show window in the center of the screen.
+  #[must_use]
+  pub fn center(mut self) -> Self {
+    self.window_builder = self.window_builder.center();
+    self
+  }
+
+  /// The initial position of the window's.
+  #[must_use]
+  pub fn position(mut self, x: f64, y: f64) -> Self {
+    self.window_builder = self.window_builder.position(x, y);
+    self
+  }
+
+  /// Window size.
+  #[must_use]
+  pub fn inner_size(mut self, width: f64, height: f64) -> Self {
+    self.window_builder = self.window_builder.inner_size(width, height);
+    self
+  }
+
+  /// Window min inner size.
+  #[must_use]
+  pub fn min_inner_size(mut self, min_width: f64, min_height: f64) -> Self {
+    self.window_builder = self.window_builder.min_inner_size(min_width, min_height);
+    self
+  }
+
+  /// Window max inner size.
+  #[must_use]
+  pub fn max_inner_size(mut self, max_width: f64, max_height: f64) -> Self {
+    self.window_builder = self.window_builder.max_inner_size(max_width, max_height);
+    self
+  }
+
+  /// Whether the window is resizable or not.
+  /// When resizable is set to false, native window's maximize button is automatically disabled.
+  #[must_use]
+  pub fn resizable(mut self, resizable: bool) -> Self {
+    self.window_builder = self.window_builder.resizable(resizable);
+    self
+  }
+
+  /// Whether the window's native maximize button is enabled or not.
+  /// If resizable is set to false, this setting is ignored.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS:** Disables the "zoom" button in the window titlebar, which is also used to enter fullscreen mode.
+  /// - **Linux / iOS / Android:** Unsupported.
+  #[must_use]
+  pub fn maximizable(mut self, maximizable: bool) -> Self {
+    self.window_builder = self.window_builder.maximizable(maximizable);
+    self
+  }
+
+  /// Whether the window's native minimize button is enabled or not.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Linux / iOS / Android:** Unsupported.
+  #[must_use]
+  pub fn minimizable(mut self, minimizable: bool) -> Self {
+    self.window_builder = self.window_builder.minimizable(minimizable);
+    self
+  }
+
+  /// Whether the window's native close button is enabled or not.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Linux:** "GTK+ will do its best to convince the window manager not to show a close button.
+  ///   Depending on the system, this function may not have any effect when called on a window that is already visible"
+  /// - **iOS / Android:** Unsupported.
+  #[must_use]
+  pub fn closable(mut self, closable: bool) -> Self {
+    self.window_builder = self.window_builder.closable(closable);
+    self
+  }
+
+  /// The title of the window in the title bar.
+  #[must_use]
+  pub fn title<S: Into<String>>(mut self, title: S) -> Self {
+    self.window_builder = self.window_builder.title(title);
+    self
+  }
+
+  /// Whether to start the window in fullscreen or not.
+  #[must_use]
+  pub fn fullscreen(mut self, fullscreen: bool) -> Self {
+    self.window_builder = self.window_builder.fullscreen(fullscreen);
+    self
+  }
+
+  /// Sets the window to be initially focused.
+  #[must_use]
+  #[deprecated(
+    since = "1.2.0",
+    note = "The window is automatically focused by default. This function Will be removed in 2.0.0. Use `focused` instead."
+  )]
+  pub fn focus(mut self) -> Self {
+    self.window_builder = self.window_builder.focused(true);
+    self
+  }
+
+  /// Whether the window will be initially focused or not.
+  #[must_use]
+  pub fn focused(mut self, focused: bool) -> Self {
+    self.window_builder = self.window_builder.focused(focused);
+    self
+  }
+
+  /// Whether the window should be maximized upon creation.
+  #[must_use]
+  pub fn maximized(mut self, maximized: bool) -> Self {
+    self.window_builder = self.window_builder.maximized(maximized);
+    self
+  }
+
+  /// Whether the window should be immediately visible upon creation.
+  #[must_use]
+  pub fn visible(mut self, visible: bool) -> Self {
+    self.window_builder = self.window_builder.visible(visible);
+    self
+  }
+
+  /// Forces a theme or uses the system settings if None was provided.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS**: Only supported on macOS 10.14+.
+  #[must_use]
+  pub fn theme(mut self, theme: Option<Theme>) -> Self {
+    self.window_builder = self.window_builder.theme(theme);
+    self
+  }
+
+  /// Whether the window should be transparent. If this is true, writing colors
+  /// with alpha values different than `1.0` will produce a transparent window.
+  #[cfg(any(not(target_os = "macos"), feature = "macos-private-api"))]
+  #[cfg_attr(
+    doc_cfg,
+    doc(cfg(any(not(target_os = "macos"), feature = "macos-private-api")))
+  )]
+  #[must_use]
+  pub fn transparent(mut self, transparent: bool) -> Self {
+    self.window_builder = self.window_builder.transparent(transparent);
+    self
+  }
+
+  /// Whether the window should have borders and bars.
+  #[must_use]
+  pub fn decorations(mut self, decorations: bool) -> Self {
+    self.window_builder = self.window_builder.decorations(decorations);
+    self
+  }
+
+  /// Whether the window should always be on top of other windows.
+  #[must_use]
+  pub fn always_on_top(mut self, always_on_top: bool) -> Self {
+    self.window_builder = self.window_builder.always_on_top(always_on_top);
+    self
+  }
+
+  /// Prevents the window contents from being captured by other apps.
+  #[must_use]
+  pub fn content_protected(mut self, protected: bool) -> Self {
+    self.window_builder = self.window_builder.content_protected(protected);
+    self
+  }
+
+  /// Sets the window icon.
+  pub fn icon(mut self, icon: Icon) -> crate::Result<Self> {
+    self.window_builder = self.window_builder.icon(icon.try_into()?)?;
+    Ok(self)
+  }
+
+  /// Sets whether or not the window icon should be hidden from the taskbar.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS**: Unsupported.
+  #[must_use]
+  pub fn skip_taskbar(mut self, skip: bool) -> Self {
+    self.window_builder = self.window_builder.skip_taskbar(skip);
+    self
+  }
+
+  /// Sets whether or not the window has shadow.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Windows:**
+  ///   - `false` has no effect on decorated window, shadows are always ON.
+  ///   - `true` will make ndecorated window have a 1px white border,
+  /// and on Windows 11, it will have a rounded corners.
+  /// - **Linux:** Unsupported.
+  #[must_use]
+  pub fn shadow(mut self, enable: bool) -> Self {
+    self.window_builder = self.window_builder.shadow(enable);
+    self
+  }
+
+  /// Sets a parent to the window to be created.
+  ///
+  /// A child window has the WS_CHILD style and is confined to the client area of its parent window.
+  ///
+  /// For more information, see <https://docs.microsoft.com/en-us/windows/win32/winmsg/window-features#child-windows>
+  #[cfg(windows)]
+  #[must_use]
+  pub fn parent_window(mut self, parent: HWND) -> Self {
+    self.window_builder = self.window_builder.parent_window(parent);
+    self
+  }
+
+  /// Sets a parent to the window to be created.
+  #[cfg(target_os = "macos")]
+  #[must_use]
+  pub fn parent_window(mut self, parent: *mut std::ffi::c_void) -> Self {
+    self.window_builder = self.window_builder.parent_window(parent);
+    self
+  }
+
+  /// Set an owner to the window to be created.
+  ///
+  /// From MSDN:
+  /// - An owned window is always above its owner in the z-order.
+  /// - The system automatically destroys an owned window when its owner is destroyed.
+  /// - An owned window is hidden when its owner is minimized.
+  ///
+  /// For more information, see <https://docs.microsoft.com/en-us/windows/win32/winmsg/window-features#owned-windows>
+  #[cfg(windows)]
+  #[must_use]
+  pub fn owner_window(mut self, owner: HWND) -> Self {
+    self.window_builder = self.window_builder.owner_window(owner);
+    self
+  }
+
+  /// Sets the [`TitleBarStyle`].
+  #[cfg(target_os = "macos")]
+  #[must_use]
+  pub fn title_bar_style(mut self, style: TitleBarStyle) -> Self {
+    self.window_builder = self.window_builder.title_bar_style(style);
+    self
+  }
+
+  /// Hide the window title.
+  #[cfg(target_os = "macos")]
+  #[must_use]
+  pub fn hidden_title(mut self, hidden: bool) -> Self {
+    self.window_builder = self.window_builder.hidden_title(hidden);
+    self
+  }
+
+  /// Defines the window [tabbing identifier] for macOS.
+  ///
+  /// Windows with matching tabbing identifiers will be grouped together.
+  /// If the tabbing identifier is not set, automatic tabbing will be disabled.
+  ///
+  /// [tabbing identifier]: <https://developer.apple.com/documentation/appkit/nswindow/1644704-tabbingidentifier>
+  #[cfg(target_os = "macos")]
+  #[must_use]
+  pub fn tabbing_identifier(mut self, identifier: &str) -> Self {
+    self.window_builder = self.window_builder.tabbing_identifier(identifier);
+    self
+  }
+
+  /// Sets whether clicking an inactive window also clicks through to the webview.
+  #[must_use]
+  pub fn accept_first_mouse(mut self, accept: bool) -> Self {
+    self.webview_attributes.accept_first_mouse = accept;
+    self
+  }
+
+  /// Sets window effects.
+  ///
+  /// Requires the window to be transparent.
+  ///
+  /// ## Platform-specific:
+  ///
+  /// - **Windows**: If using decorations or shadows, you may want to try this workaround https://github.com/tauri-apps/tao/issues/72#issuecomment-975607891
+  /// - **Linux**: Unsupported
+  pub fn effects(mut self, effects: WindowEffectsConfig) -> Self {
+    self.webview_attributes = self.webview_attributes.window_effects(effects);
+    self
+  }
+}
+
+/// Webview attributes.
+impl<'a, R: Runtime> WindowBuilder<'a, R> {
+  /// Adds the provided JavaScript to a list of scripts that should be run after the global object has been created,
+  /// but before the HTML document has been parsed and before any other script included by the HTML document is run.
+  ///
+  /// Since it runs on all top-level document and child frame page navigations,
+  /// it's recommended to check the `window.location` to guard your script from running on unexpected origins.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use tauri::{WindowBuilder, Runtime};
+  ///
+  /// const INIT_SCRIPT: &str = r#"
+  ///   if (window.location.origin === 'https://tauri.app') {
+  ///     console.log("hello world from js init script");
+  ///
+  ///     window.__MY_CUSTOM_PROPERTY__ = { foo: 'bar' };
+  ///   }
+  /// "#;
+  ///
+  /// fn main() {
+  ///   tauri::Builder::default()
+  ///     .setup(|app| {
+  ///       let window = tauri::WindowBuilder::new(app, "label", tauri::WindowUrl::App("index.html".into()))
+  ///         .initialization_script(INIT_SCRIPT)
+  ///         .build()?;
+  ///       Ok(())
+  ///     });
+  /// }
+  /// ```
+  #[must_use]
+  pub fn initialization_script(mut self, script: &str) -> Self {
+    self
+      .webview_attributes
+      .initialization_scripts
+      .push(script.to_string());
+    self
+  }
+
+  /// Set the user agent for the webview
+  #[must_use]
+  pub fn user_agent(mut self, user_agent: &str) -> Self {
+    self.webview_attributes.user_agent = Some(user_agent.to_string());
+    self
+  }
+
+  /// Set additional arguments for the webview.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS / Linux / Android / iOS**: Unsupported.
+  ///
+  /// ## Warning
+  ///
+  /// By default wry passes `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`
+  /// so if you use this method, you also need to disable these components by yourself if you want.
+  #[must_use]
+  pub fn additional_browser_args(mut self, additional_args: &str) -> Self {
+    self.webview_attributes.additional_browser_args = Some(additional_args.to_string());
+    self
+  }
+
+  /// Data directory for the webview.
+  #[must_use]
+  pub fn data_directory(mut self, data_directory: PathBuf) -> Self {
+    self
+      .webview_attributes
+      .data_directory
+      .replace(data_directory);
+    self
+  }
+
+  /// Disables the file drop handler. This is required to use drag and drop APIs on the front end on Windows.
+  #[must_use]
+  pub fn disable_file_drop_handler(mut self) -> Self {
+    self.webview_attributes.file_drop_handler_enabled = false;
+    self
+  }
+
+  /// Enables clipboard access for the page rendered on **Linux** and **Windows**.
+  ///
+  /// **macOS** doesn't provide such method and is always enabled by default,
+  /// but you still need to add menu item accelerators to use shortcuts.
+  #[must_use]
+  pub fn enable_clipboard_access(mut self) -> Self {
+    self.webview_attributes.clipboard = true;
+    self
+  }
+
+  /// Enable or disable incognito mode for the WebView..
+  ///
+  ///  ## Platform-specific:
+  ///
+  ///  **Android**: Unsupported.
+  #[must_use]
+  pub fn incognito(mut self, incognito: bool) -> Self {
+    self.webview_attributes.incognito = incognito;
+    self
+  }
+}
+
+/// Key for a JS event listener.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct JsEventListenerKey {
+  /// The associated window label.
+  pub window_label: Option<String>,
+  /// The event name.
+  pub event: String,
+}
+
 // TODO: expand these docs since this is a pretty important type
 /// A webview window managed by Tauri.
 ///
@@ -91,29 +772,19 @@ impl Monitor {
 #[derive(Debug)]
 pub struct Window<R: Runtime> {
   /// The webview window created by the runtime.
-  window: DetachedWindow<R>,
+  pub(crate) window: DetachedWindow<EventLoopMessage, R>,
   /// The manager to associate this webview window with.
   manager: WindowManager<R>,
   pub(crate) app_handle: AppHandle<R>,
+  js_event_listeners: Arc<Mutex<HashMap<JsEventListenerKey, HashSet<usize>>>>,
+
+  #[cfg(test)]
+  pub(crate) current_url: url::Url,
 }
 
-#[cfg(any(windows, target_os = "macos"))]
-#[cfg_attr(doc_cfg, doc(cfg(any(windows, target_os = "macos"))))]
 unsafe impl<R: Runtime> raw_window_handle::HasRawWindowHandle for Window<R> {
-  #[cfg(windows)]
   fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
-    let mut handle = raw_window_handle::Win32Handle::empty();
-    handle.hwnd = self.hwnd().expect("failed to get window `hwnd`");
-    raw_window_handle::RawWindowHandle::Win32(handle)
-  }
-
-  #[cfg(target_os = "macos")]
-  fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
-    let mut handle = raw_window_handle::AppKitHandle::empty();
-    handle.ns_window = self
-      .ns_window()
-      .expect("failed to get window's `ns_window`");
-    raw_window_handle::RawWindowHandle::AppKit(handle)
+    self.window.dispatcher.raw_window_handle().unwrap()
   }
 }
 
@@ -123,6 +794,9 @@ impl<R: Runtime> Clone for Window<R> {
       window: self.window.clone(),
       manager: self.manager.clone(),
       app_handle: self.app_handle.clone(),
+      js_event_listeners: self.js_event_listeners.clone(),
+      #[cfg(test)]
+      current_url: self.current_url.clone(),
     }
   }
 }
@@ -142,7 +816,24 @@ impl<R: Runtime> PartialEq for Window<R> {
   }
 }
 
-impl<R: Runtime> Manager<R> for Window<R> {}
+impl<R: Runtime> Manager<R> for Window<R> {
+  fn emit_to<S: Serialize + Clone>(
+    &self,
+    label: &str,
+    event: &str,
+    payload: S,
+  ) -> crate::Result<()> {
+    self
+      .manager()
+      .emit_filter(event, Some(self.label()), payload, |w| label == w.label())
+  }
+
+  fn emit_all<S: Serialize + Clone>(&self, event: &str, payload: S) -> crate::Result<()> {
+    self
+      .manager()
+      .emit_filter(event, Some(self.label()), payload, |_| true)
+  }
+}
 impl<R: Runtime> ManagerBase<R> for Window<R> {
   fn manager(&self) -> &WindowManager<R> {
     &self.manager
@@ -152,7 +843,7 @@ impl<R: Runtime> ManagerBase<R> for Window<R> {
     RuntimeOrDispatch::Dispatch(self.dispatcher())
   }
 
-  fn app_handle(&self) -> AppHandle<R> {
+  fn managed_app_handle(&self) -> AppHandle<R> {
     self.app_handle.clone()
   }
 }
@@ -164,47 +855,114 @@ impl<'de, R: Runtime> CommandArg<'de, R> for Window<R> {
   }
 }
 
+/// The platform webview handle. Accessed with [`Window#method.with_webview`];
+#[cfg(feature = "wry")]
+#[cfg_attr(doc_cfg, doc(cfg(feature = "wry")))]
+pub struct PlatformWebview(tauri_runtime_wry::Webview);
+
+#[cfg(feature = "wry")]
+impl PlatformWebview {
+  /// Returns [`webkit2gtk::WebView`] handle.
+  #[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+  ))]
+  #[cfg_attr(
+    doc_cfg,
+    doc(cfg(any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd"
+    )))
+  )]
+  pub fn inner(&self) -> std::rc::Rc<webkit2gtk::WebView> {
+    self.0.clone()
+  }
+
+  /// Returns the WebView2 controller.
+  #[cfg(windows)]
+  #[cfg_attr(doc_cfg, doc(cfg(windows)))]
+  pub fn controller(
+    &self,
+  ) -> webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller {
+    self.0.controller.clone()
+  }
+
+  /// Returns the [WKWebView] handle.
+  ///
+  /// [WKWebView]: https://developer.apple.com/documentation/webkit/wkwebview
+  #[cfg(any(target_os = "macos", target_os = "ios"))]
+  #[cfg_attr(doc_cfg, doc(cfg(any(target_os = "macos", target_os = "ios"))))]
+  pub fn inner(&self) -> cocoa::base::id {
+    self.0.webview
+  }
+
+  /// Returns WKWebView [controller] handle.
+  ///
+  /// [controller]: https://developer.apple.com/documentation/webkit/wkusercontentcontroller
+  #[cfg(any(target_os = "macos", target_os = "ios"))]
+  #[cfg_attr(doc_cfg, doc(cfg(any(target_os = "macos", target_os = "ios"))))]
+  pub fn controller(&self) -> cocoa::base::id {
+    self.0.manager
+  }
+
+  /// Returns [NSWindow] associated with the WKWebView webview.
+  ///
+  /// [NSWindow]: https://developer.apple.com/documentation/appkit/nswindow
+  #[cfg(target_os = "macos")]
+  #[cfg_attr(doc_cfg, doc(cfg(target_os = "macos")))]
+  pub fn ns_window(&self) -> cocoa::base::id {
+    self.0.ns_window
+  }
+
+  /// Returns [UIViewController] used by the WKWebView webview NSWindow.
+  ///
+  /// [UIViewController]: https://developer.apple.com/documentation/uikit/uiviewcontroller
+  #[cfg(target_os = "ios")]
+  #[cfg_attr(doc_cfg, doc(cfg(target_os = "ios")))]
+  pub fn view_controller(&self) -> cocoa::base::id {
+    self.0.view_controller
+  }
+
+  /// Returns handle for JNI execution.
+  #[cfg(target_os = "android")]
+  pub fn jni_handle(&self) -> tauri_runtime_wry::wry::webview::JniHandle {
+    self.0
+  }
+}
+
+/// Base window functions.
 impl<R: Runtime> Window<R> {
   /// Create a new window that is attached to the manager.
   pub(crate) fn new(
     manager: WindowManager<R>,
-    window: DetachedWindow<R>,
+    window: DetachedWindow<EventLoopMessage, R>,
     app_handle: AppHandle<R>,
   ) -> Self {
     Self {
       window,
       manager,
       app_handle,
+      js_event_listeners: Default::default(),
+      #[cfg(test)]
+      current_url: "http://tauri.app".parse().unwrap(),
     }
   }
 
-  /// Creates a new webview window.
+  /// Initializes a webview window builder with the given window label and URL to load on the webview.
   ///
   /// Data URLs are only supported with the `window-data-url` feature flag.
-  pub fn create_window<F>(
-    &mut self,
-    label: String,
+  pub fn builder<'a, M: Manager<R>, L: Into<String>>(
+    manager: &'a M,
+    label: L,
     url: WindowUrl,
-    setup: F,
-  ) -> crate::Result<Window<R>>
-  where
-    F: FnOnce(
-      <R::Dispatcher as Dispatch>::WindowBuilder,
-      WebviewAttributes,
-    ) -> (
-      <R::Dispatcher as Dispatch>::WindowBuilder,
-      WebviewAttributes,
-    ),
-  {
-    let (window_builder, webview_attributes) = setup(
-      <R::Dispatcher as Dispatch>::WindowBuilder::new(),
-      WebviewAttributes::new(url),
-    );
-    self.create_new_window(PendingWindow::new(
-      window_builder,
-      webview_attributes,
-      label,
-    ))
+  ) -> WindowBuilder<'a, R> {
+    WindowBuilder::<'a, R>::new(manager, label.into(), url)
   }
 
   pub(crate) fn invoke_responder(&self) -> Arc<InvokeResponder<R>> {
@@ -225,213 +983,100 @@ impl<R: Runtime> Window<R> {
       .map_err(Into::into)
   }
 
-  /// How to handle this window receiving an [`InvokeMessage`].
-  pub fn on_message(self, payload: InvokePayload) -> crate::Result<()> {
-    let manager = self.manager.clone();
-    match payload.cmd.as_str() {
-      "__initialized" => {
-        let payload: PageLoadPayload = serde_json::from_value(payload.inner)?;
-        manager.run_on_page_load(self, payload);
-      }
-      _ => {
-        let message = InvokeMessage::new(
-          self.clone(),
-          manager.state(),
-          payload.cmd.to_string(),
-          payload.inner,
-        );
-        let resolver = InvokeResolver::new(self, payload.callback, payload.error);
-
-        let invoke = Invoke { message, resolver };
-        if let Some(module) = &payload.tauri_module {
-          let module = module.to_string();
-          crate::endpoints::handle(module, invoke, manager.config(), manager.package_info());
-        } else if payload.cmd.starts_with("plugin:") {
-          manager.extend_api(invoke);
-        } else {
-          manager.run_invoke_handler(invoke);
-        }
-      }
-    }
-
-    Ok(())
-  }
-
   /// The label of this window.
   pub fn label(&self) -> &str {
     &self.window.label
   }
 
-  /// Emits an event to both the JavaScript and the Rust listeners.
-  pub fn emit_and_trigger<S: Serialize + Clone>(
-    &self,
-    event: &str,
-    payload: S,
-  ) -> crate::Result<()> {
-    self.trigger(event, Some(serde_json::to_string(&payload)?));
-    self.emit(event, payload)
-  }
-
-  pub(crate) fn emit_internal<S: Serialize>(
-    &self,
-    event: &str,
-    source_window_label: Option<&str>,
-    payload: S,
-  ) -> crate::Result<()> {
-    self.eval(&format!(
-      "window['{}']({{event: {}, windowLabel: {}, payload: {}}})",
-      self.manager.event_emit_function_name(),
-      serde_json::to_string(event)?,
-      serde_json::to_string(&source_window_label)?,
-      serde_json::to_value(payload)?,
-    ))?;
-    Ok(())
-  }
-
-  /// Emits an event to the JavaScript listeners on the current window.
-  ///
-  /// The event is only delivered to listeners that used the `WebviewWindow#listen` method on the @tauri-apps/api `window` module.
-  pub fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) -> crate::Result<()> {
-    self
-      .manager
-      .emit_filter(event, Some(self.label()), payload, |w| {
-        w.has_js_listener(None, event) || w.has_js_listener(Some(self.label().into()), event)
-      })?;
-    Ok(())
-  }
-
-  /// Listen to an event on this window.
-  ///
-  /// This listener only receives events that are triggered using the
-  /// [`trigger`](Window#method.trigger) and [`emit_and_trigger`](Window#method.emit_and_trigger) methods or
-  /// the `appWindow.emit` function from the @tauri-apps/api `window` module.
-  pub fn listen<F>(&self, event: impl Into<String>, handler: F) -> EventHandler
-  where
-    F: Fn(Event) + Send + 'static,
-  {
-    let label = self.window.label.clone();
-    self.manager.listen(event.into(), Some(label), handler)
-  }
-
-  /// Unlisten to an event on this window.
-  pub fn unlisten(&self, handler_id: EventHandler) {
-    self.manager.unlisten(handler_id)
-  }
-
-  /// Listen to an event on this window a single time.
-  pub fn once<F>(&self, event: impl Into<String>, handler: F) -> EventHandler
-  where
-    F: Fn(Event) + Send + 'static,
-  {
-    let label = self.window.label.clone();
-    self.manager.once(event.into(), Some(label), handler)
-  }
-
-  /// Triggers an event to the Rust listeners on this window.
-  ///
-  /// The event is only delivered to listeners that used the [`listen`](Window#method.listen) method.
-  pub fn trigger(&self, event: &str, data: Option<String>) {
-    let label = self.window.label.clone();
-    self.manager.trigger(event, Some(label), data)
-  }
-
-  /// Evaluates JavaScript on this window.
-  pub fn eval(&self, js: &str) -> crate::Result<()> {
-    self.window.dispatcher.eval_script(js).map_err(Into::into)
-  }
-
   /// Registers a window event listener.
   pub fn on_window_event<F: Fn(&WindowEvent) + Send + 'static>(&self, f: F) {
-    self.window.dispatcher.on_window_event(f);
+    self
+      .window
+      .dispatcher
+      .on_window_event(move |event| f(&event.clone().into()));
   }
 
   /// Registers a menu event listener.
   pub fn on_menu_event<F: Fn(MenuEvent) + Send + 'static>(&self, f: F) -> uuid::Uuid {
     let menu_ids = self.window.menu_ids.clone();
     self.window.dispatcher.on_menu_event(move |event| {
-      f(MenuEvent {
-        menu_item_id: menu_ids
-          .lock()
-          .unwrap()
-          .get(&event.menu_item_id)
-          .unwrap()
-          .clone(),
-      })
+      let id = menu_ids
+        .lock()
+        .unwrap()
+        .get(&event.menu_item_id)
+        .unwrap()
+        .clone();
+      f(MenuEvent { menu_item_id: id })
     })
   }
 
-  pub(crate) fn register_js_listener(&self, window_label: Option<String>, event: String, id: u64) {
-    self
-      .window
-      .js_event_listeners
-      .lock()
-      .unwrap()
-      .entry(JsEventListenerKey {
-        window_label,
-        event,
-      })
-      .or_insert_with(Default::default)
-      .insert(id);
-  }
-
-  pub(crate) fn unregister_js_listener(&self, id: u64) {
-    let mut empty = None;
-    let mut js_listeners = self.window.js_event_listeners.lock().unwrap();
-    for (key, ids) in js_listeners.iter_mut() {
-      if ids.contains(&id) {
-        ids.remove(&id);
-        if ids.is_empty() {
-          empty.replace(key.clone());
-        }
-        break;
-      }
-    }
-
-    if let Some(key) = empty {
-      js_listeners.remove(&key);
-    }
-  }
-
-  /// Whether this window registered a listener to an event from the given window and event name.
-  pub(crate) fn has_js_listener(&self, window_label: Option<String>, event: &str) -> bool {
-    self
-      .window
-      .js_event_listeners
-      .lock()
-      .unwrap()
-      .contains_key(&JsEventListenerKey {
-        window_label,
-        event: event.into(),
-      })
-  }
-
-  /// Opens the developer tools window (Web Inspector).
-  /// The devtools is only enabled on debug builds or with the `devtools` feature flag.
+  /// Executes a closure, providing it with the webview handle that is specific to the current platform.
   ///
-  /// ## Platform-specific
+  /// The closure is executed on the main thread.
   ///
-  /// - **macOS**: This is a private API on macOS,
-  /// so you cannot use this if your application will be published on the App Store.
-  ///
-  /// # Example
+  /// # Examples
   ///
   /// ```rust,no_run
+  /// #[cfg(target_os = "macos")]
+  /// #[macro_use]
+  /// extern crate objc;
   /// use tauri::Manager;
-  /// tauri::Builder::default()
-  ///   .setup(|app| {
-  ///     #[cfg(debug_assertions)]
-  ///     app.get_window("main").unwrap().open_devtools();
-  ///     Ok(())
+  ///
+  /// fn main() {
+  ///   tauri::Builder::default()
+  ///     .setup(|app| {
+  ///       let main_window = app.get_window("main").unwrap();
+  ///       main_window.with_webview(|webview| {
+  ///         #[cfg(target_os = "linux")]
+  ///         {
+  ///           // see https://docs.rs/webkit2gtk/0.18.2/webkit2gtk/struct.WebView.html
+  ///           // and https://docs.rs/webkit2gtk/0.18.2/webkit2gtk/trait.WebViewExt.html
+  ///           use webkit2gtk::traits::WebViewExt;
+  ///           webview.inner().set_zoom_level(4.);
+  ///         }
+  ///
+  ///         #[cfg(windows)]
+  ///         unsafe {
+  ///           // see https://docs.rs/webview2-com/0.19.1/webview2_com/Microsoft/Web/WebView2/Win32/struct.ICoreWebView2Controller.html
+  ///           webview.controller().SetZoomFactor(4.).unwrap();
+  ///         }
+  ///
+  ///         #[cfg(target_os = "macos")]
+  ///         unsafe {
+  ///           let () = msg_send![webview.inner(), setPageZoom: 4.];
+  ///           let () = msg_send![webview.controller(), removeAllUserScripts];
+  ///           let bg_color: cocoa::base::id = msg_send![class!(NSColor), colorWithDeviceRed:0.5 green:0.2 blue:0.4 alpha:1.];
+  ///           let () = msg_send![webview.ns_window(), setBackgroundColor: bg_color];
+  ///         }
+  ///
+  ///         #[cfg(target_os = "android")]
+  ///         {
+  ///           use jni::objects::JValue;
+  ///           webview.jni_handle().exec(|env, _, webview| {
+  ///             env.call_method(webview, "zoomBy", "(F)V", &[JValue::Float(4.)]).unwrap();
+  ///           })
+  ///         }
+  ///       });
+  ///       Ok(())
   ///   });
+  /// }
   /// ```
-  #[cfg(any(debug_assertions, feature = "devtools"))]
-  #[cfg_attr(doc_cfg, doc(cfg(any(debug_assertions, feature = "devtools"))))]
-  pub fn open_devtools(&self) {
-    self.window.dispatcher.open_devtools();
+  #[cfg(all(feature = "wry"))]
+  #[cfg_attr(doc_cfg, doc(all(feature = "wry")))]
+  pub fn with_webview<F: FnOnce(PlatformWebview) + Send + 'static>(
+    &self,
+    f: F,
+  ) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .with_webview(|w| f(PlatformWebview(*w.downcast().unwrap())))
+      .map_err(Into::into)
   }
+}
 
-  // Getters
-
+/// Window getters.
+impl<R: Runtime> Window<R> {
   /// Gets a handle to the window menu.
   pub fn menu_handle(&self) -> MenuHandle<R> {
     MenuHandle {
@@ -474,9 +1119,19 @@ impl<R: Runtime> Window<R> {
     self.window.dispatcher.is_fullscreen().map_err(Into::into)
   }
 
+  /// Gets the window's current minimized state.
+  pub fn is_minimized(&self) -> crate::Result<bool> {
+    self.window.dispatcher.is_minimized().map_err(Into::into)
+  }
+
   /// Gets the window's current maximized state.
   pub fn is_maximized(&self) -> crate::Result<bool> {
     self.window.dispatcher.is_maximized().map_err(Into::into)
+  }
+
+  /// Gets the window's current focus state.
+  pub fn is_focused(&self) -> crate::Result<bool> {
+    self.window.dispatcher.is_focused().map_err(Into::into)
   }
 
   /// Gets the window’s current decoration state.
@@ -489,9 +1144,41 @@ impl<R: Runtime> Window<R> {
     self.window.dispatcher.is_resizable().map_err(Into::into)
   }
 
-  /// Gets the window's current vibility state.
+  /// Gets the window’s native maximize button state
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Linux / iOS / Android:** Unsupported.
+  pub fn is_maximizable(&self) -> crate::Result<bool> {
+    self.window.dispatcher.is_maximizable().map_err(Into::into)
+  }
+
+  /// Gets the window’s native minimize button state
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Linux / iOS / Android:** Unsupported.
+  pub fn is_minimizable(&self) -> crate::Result<bool> {
+    self.window.dispatcher.is_minimizable().map_err(Into::into)
+  }
+
+  /// Gets the window’s native close button state
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Linux / iOS / Android:** Unsupported.
+  pub fn is_closable(&self) -> crate::Result<bool> {
+    self.window.dispatcher.is_closable().map_err(Into::into)
+  }
+
+  /// Gets the window's current visibility state.
   pub fn is_visible(&self) -> crate::Result<bool> {
     self.window.dispatcher.is_visible().map_err(Into::into)
+  }
+
+  /// Gets the window's current title.
+  pub fn title(&self) -> crate::Result<String> {
+    self.window.dispatcher.title().map_err(Into::into)
   }
 
   /// Returns the monitor on which the window currently resides.
@@ -531,20 +1218,38 @@ impl<R: Runtime> Window<R> {
   /// Returns the native handle that is used by this window.
   #[cfg(target_os = "macos")]
   pub fn ns_window(&self) -> crate::Result<*mut std::ffi::c_void> {
-    self.window.dispatcher.ns_window().map_err(Into::into)
-  }
-  /// Returns the native handle that is used by this window.
-  #[cfg(windows)]
-  pub fn hwnd(&self) -> crate::Result<*mut std::ffi::c_void> {
     self
       .window
       .dispatcher
-      .hwnd()
-      .map(|hwnd| hwnd.0 as *mut _)
+      .raw_window_handle()
       .map_err(Into::into)
+      .and_then(|handle| {
+        if let raw_window_handle::RawWindowHandle::AppKit(h) = handle {
+          Ok(h.ns_window)
+        } else {
+          Err(crate::Error::InvalidWindowHandle)
+        }
+      })
   }
 
-  /// Returns the `ApplicatonWindow` from gtk crate that is used by this window.
+  /// Returns the native handle that is used by this window.
+  #[cfg(windows)]
+  pub fn hwnd(&self) -> crate::Result<HWND> {
+    self
+      .window
+      .dispatcher
+      .raw_window_handle()
+      .map_err(Into::into)
+      .and_then(|handle| {
+        if let raw_window_handle::RawWindowHandle::Win32(h) = handle {
+          Ok(HWND(h.hwnd as _))
+        } else {
+          Err(crate::Error::InvalidWindowHandle)
+        }
+      })
+  }
+
+  /// Returns the `ApplicationWindow` from gtk crate that is used by this window.
   ///
   /// Note that this can only be used on the main thread.
   #[cfg(any(
@@ -558,8 +1263,19 @@ impl<R: Runtime> Window<R> {
     self.window.dispatcher.gtk_window().map_err(Into::into)
   }
 
-  // Setters
+  /// Returns the current window theme.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS**: Only supported on macOS 10.14+.
+  pub fn theme(&self) -> crate::Result<Theme> {
+    self.window.dispatcher.theme().map_err(Into::into)
+  }
+}
 
+/// Desktop window setters and actions.
+#[cfg(desktop)]
+impl<R: Runtime> Window<R> {
   /// Centers the window.
   pub fn center(&self) -> crate::Result<()> {
     self.window.dispatcher.center().map_err(Into::into)
@@ -595,11 +1311,55 @@ impl<R: Runtime> Window<R> {
   }
 
   /// Determines if this window should be resizable.
+  /// When resizable is set to false, native window's maximize button is automatically disabled.
   pub fn set_resizable(&self, resizable: bool) -> crate::Result<()> {
     self
       .window
       .dispatcher
       .set_resizable(resizable)
+      .map_err(Into::into)
+  }
+
+  /// Determines if this window's native maximize button should be enabled.
+  /// If resizable is set to false, this setting is ignored.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS:** Disables the "zoom" button in the window titlebar, which is also used to enter fullscreen mode.
+  /// - **Linux / iOS / Android:** Unsupported.
+  pub fn set_maximizable(&self, maximizable: bool) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_maximizable(maximizable)
+      .map_err(Into::into)
+  }
+
+  /// Determines if this window's native minize button should be enabled.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Linux / iOS / Android:** Unsupported.
+  pub fn set_minimizable(&self, minimizable: bool) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_minimizable(minimizable)
+      .map_err(Into::into)
+  }
+
+  /// Determines if this window's native close button should be enabled.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Linux:** "GTK+ will do its best to convince the window manager not to show a close button.
+  ///   Depending on the system, this function may not have any effect when called on a window that is already visible"
+  /// - **iOS / Android:** Unsupported.
+  pub fn set_closable(&self, closable: bool) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_closable(closable)
       .map_err(Into::into)
   }
 
@@ -664,12 +1424,74 @@ impl<R: Runtime> Window<R> {
       .map_err(Into::into)
   }
 
+  /// Determines if this window should have shadow.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Windows:**
+  ///   - `false` has no effect on decorated window, shadow are always ON.
+  ///   - `true` will make ndecorated window have a 1px white border,
+  /// and on Windows 11, it will have a rounded corners.
+  /// - **Linux:** Unsupported.
+  pub fn set_shadow(&self, enable: bool) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_shadow(enable)
+      .map_err(Into::into)
+  }
+
+  /// Sets window effects, pass [`None`] to clear any effects applied if possible.
+  ///
+  /// Requires the window to be transparent.
+  ///
+  /// See [`EffectsBuilder`] for a convenient builder for [`WindowEffectsConfig`].
+  ///
+  ///
+  /// ```rust,no_run
+  /// use tauri::{Manager, window::{Color, Effect, EffectState, EffectsBuilder}};
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     let window = app.get_window("main").unwrap();
+  ///     window.set_effects(
+  ///       EffectsBuilder::new()
+  ///         .effect(Effect::Popover)
+  ///         .state(EffectState::Active)
+  ///         .radius(5.)
+  ///         .color(Color(0, 0, 0, 255))
+  ///         .build(),
+  ///     )?;
+  ///     Ok(())
+  ///   });
+  /// ```
+  ///
+  /// ## Platform-specific:
+  ///
+  /// - **Windows**: If using decorations or shadows, you may want to try this workaround https://github.com/tauri-apps/tao/issues/72#issuecomment-975607891
+  /// - **Linux**: Unsupported
+  pub fn set_effects<E: Into<Option<WindowEffectsConfig>>>(&self, effects: E) -> crate::Result<()> {
+    let effects = effects.into();
+    let window = self.clone();
+    self.run_on_main_thread(move || {
+      let _ = crate::vibrancy::set_window_effects(&window, effects);
+    })
+  }
+
   /// Determines if this window should always be on top of other windows.
   pub fn set_always_on_top(&self, always_on_top: bool) -> crate::Result<()> {
     self
       .window
       .dispatcher
       .set_always_on_top(always_on_top)
+      .map_err(Into::into)
+  }
+
+  /// Prevents the window contents from being captured by other apps.
+  pub fn set_content_protected(&self, protected: bool) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_content_protected(protected)
       .map_err(Into::into)
   }
 
@@ -725,10 +1547,18 @@ impl<R: Runtime> Window<R> {
 
   /// Sets this window' icon.
   pub fn set_icon(&self, icon: Icon) -> crate::Result<()> {
-    self.window.dispatcher.set_icon(icon).map_err(Into::into)
+    self
+      .window
+      .dispatcher
+      .set_icon(icon.try_into()?)
+      .map_err(Into::into)
   }
 
-  /// Whether to show the window icon in the task bar or not.
+  /// Whether to hide the window icon from the taskbar or not.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS:** Unsupported.
   pub fn set_skip_taskbar(&self, skip: bool) -> crate::Result<()> {
     self
       .window
@@ -737,10 +1567,675 @@ impl<R: Runtime> Window<R> {
       .map_err(Into::into)
   }
 
+  /// Grabs the cursor, preventing it from leaving the window.
+  ///
+  /// There's no guarantee that the cursor will be hidden. You should
+  /// hide it by yourself if you want so.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Linux:** Unsupported.
+  /// - **macOS:** This locks the cursor in a fixed location, which looks visually awkward.
+  pub fn set_cursor_grab(&self, grab: bool) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_cursor_grab(grab)
+      .map_err(Into::into)
+  }
+
+  /// Modifies the cursor's visibility.
+  ///
+  /// If `false`, this will hide the cursor. If `true`, this will show the cursor.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **Windows:** The cursor is only hidden within the confines of the window.
+  /// - **macOS:** The cursor is hidden as long as the window has input focus, even if the cursor is
+  ///   outside of the window.
+  pub fn set_cursor_visible(&self, visible: bool) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_cursor_visible(visible)
+      .map_err(Into::into)
+  }
+
+  /// Modifies the cursor icon of the window.
+  pub fn set_cursor_icon(&self, icon: CursorIcon) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_cursor_icon(icon)
+      .map_err(Into::into)
+  }
+
+  /// Changes the position of the cursor in window coordinates.
+  pub fn set_cursor_position<Pos: Into<Position>>(&self, position: Pos) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_cursor_position(position)
+      .map_err(Into::into)
+  }
+
+  /// Ignores the window cursor events.
+  pub fn set_ignore_cursor_events(&self, ignore: bool) -> crate::Result<()> {
+    self
+      .window
+      .dispatcher
+      .set_ignore_cursor_events(ignore)
+      .map_err(Into::into)
+  }
+
   /// Starts dragging the window.
   pub fn start_dragging(&self) -> crate::Result<()> {
     self.window.dispatcher.start_dragging().map_err(Into::into)
   }
+}
+
+/// Webview APIs.
+impl<R: Runtime> Window<R> {
+  /// Returns the current url of the webview.
+  // TODO: in v2, change this type to Result
+  #[cfg(not(test))]
+  pub fn url(&self) -> Url {
+    self.window.dispatcher.url().unwrap()
+  }
+
+  #[cfg(test)]
+  pub fn url(&self) -> Url {
+    self.current_url.clone()
+  }
+
+  #[cfg(test)]
+  pub(crate) fn navigate(&mut self, url: Url) {
+    self.current_url = url;
+  }
+
+  fn is_local_url(&self, current_url: &Url) -> bool {
+    self.manager.get_url().make_relative(current_url).is_some() || {
+      let protocol_url = self.manager.protocol_url();
+      current_url.scheme() == protocol_url.scheme() && current_url.domain() == protocol_url.domain()
+    }
+  }
+
+  /// Handles this window receiving an [`InvokeMessage`].
+  pub fn on_message(self, payload: InvokePayload) -> crate::Result<()> {
+    let manager = self.manager.clone();
+    let current_url = self.url();
+    let is_local = self.is_local_url(&current_url);
+
+    let mut scope_not_found_error_message =
+      ipc_scope_not_found_error_message(&self.window.label, current_url.as_str());
+    let scope = if is_local {
+      None
+    } else {
+      match self.ipc_scope().remote_access_for(&self, &current_url) {
+        Ok(scope) => Some(scope),
+        Err(e) => {
+          if e.matches_window {
+            scope_not_found_error_message = ipc_scope_domain_error_message(current_url.as_str());
+          } else if e.matches_domain {
+            scope_not_found_error_message = ipc_scope_window_error_message(&self.window.label);
+          }
+          None
+        }
+      }
+    };
+    match payload.cmd.as_str() {
+      "__initialized" => {
+        let payload: PageLoadPayload = serde_json::from_value(payload.inner)?;
+        manager.run_on_page_load(self, payload);
+      }
+      _ => {
+        let message = InvokeMessage::new(
+          self.clone(),
+          manager.state(),
+          payload.cmd.to_string(),
+          payload.inner,
+        );
+        #[allow(clippy::redundant_clone)]
+        let resolver = InvokeResolver::new(self.clone(), payload.callback, payload.error);
+
+        let mut invoke = Invoke { message, resolver };
+        if !is_local && scope.is_none() {
+          invoke.resolver.reject(scope_not_found_error_message);
+          return Ok(());
+        }
+
+        if payload.cmd.starts_with("plugin:") {
+          if !is_local {
+            let command = invoke.message.command.replace("plugin:", "");
+            let plugin_name = command.split('|').next().unwrap().to_string();
+            if !scope
+              .map(|s| s.plugins().contains(&plugin_name))
+              .unwrap_or(true)
+            {
+              invoke.resolver.reject(IPC_SCOPE_DOES_NOT_ALLOW);
+              return Ok(());
+            }
+          }
+          let command = invoke.message.command.replace("plugin:", "");
+          let mut tokens = command.split('|');
+          // safe to unwrap: split always has a least one item
+          let plugin = tokens.next().unwrap();
+          invoke.message.command = tokens
+            .next()
+            .map(|c| c.to_string())
+            .unwrap_or_else(String::new);
+
+          let command = invoke.message.command.clone();
+          let resolver = invoke.resolver.clone();
+          #[cfg(mobile)]
+          let message = invoke.message.clone();
+
+          #[allow(unused_mut)]
+          let mut handled = manager.extend_api(plugin, invoke);
+
+          #[cfg(target_os = "ios")]
+          {
+            if !handled {
+              handled = true;
+              let plugin = plugin.to_string();
+              let (callback, error) = (resolver.callback, resolver.error);
+              self.with_webview(move |webview| {
+                unsafe {
+                  crate::ios::post_ipc_message(
+                    webview.inner() as _,
+                    &plugin.as_str().into(),
+                    &heck::ToLowerCamelCase::to_lower_camel_case(message.command.as_str())
+                      .as_str()
+                      .into(),
+                    crate::ios::json_to_dictionary(&message.payload) as _,
+                    callback.0,
+                    error.0,
+                  )
+                };
+              })?;
+            }
+          }
+
+          #[cfg(target_os = "android")]
+          {
+            if !handled {
+              handled = true;
+              let resolver_ = resolver.clone();
+              let runtime_handle = self.app_handle.runtime_handle.clone();
+              let plugin = plugin.to_string();
+              self.with_webview(move |webview| {
+                webview.jni_handle().exec(move |env, activity, webview| {
+                  use jni::{
+                    errors::Error as JniError,
+                    objects::JObject,
+                    JNIEnv,
+                  };
+
+                  fn handle_message<R: Runtime>(
+                    plugin: &str,
+                    runtime_handle: &R::Handle,
+                    message: InvokeMessage<R>,
+                    (callback, error): (CallbackFn, CallbackFn),
+                    env: JNIEnv<'_>,
+                    activity: JObject<'_>,
+                    webview: JObject<'_>,
+                  ) -> Result<(), JniError> {
+                    let data = crate::jni_helpers::to_jsobject::<R>(env, activity, runtime_handle, &message.payload)?;
+                    let plugin_manager = env
+                      .call_method(
+                        activity,
+                        "getPluginManager",
+                        "()Lapp/tauri/plugin/PluginManager;",
+                        &[],
+                      )?
+                      .l()?;
+
+                    env.call_method(
+                      plugin_manager,
+                      "postIpcMessage",
+                      "(Landroid/webkit/WebView;Ljava/lang/String;Ljava/lang/String;Lapp/tauri/plugin/JSObject;JJ)V",
+                      &[
+                        webview.into(),
+                        env.new_string(plugin)?.into(),
+                        env.new_string(&heck::ToLowerCamelCase::to_lower_camel_case(message.command.as_str()))?.into(),
+                        data,
+                        (callback.0 as i64).into(),
+                        (error.0 as i64).into(),
+                      ],
+                    )?;
+
+                    Ok(())
+                  }
+
+                  if let Err(e) = handle_message(
+                    &plugin,
+                    &runtime_handle,
+                    message,
+                    (resolver_.callback, resolver_.error),
+                    env,
+                    activity,
+                    webview,
+                  ) {
+                    resolver_.reject(format!("failed to reach Android layer: {e}"));
+                  }
+                });
+              })?;
+            }
+          }
+
+          if !handled {
+            resolver.reject(format!("Command {command} not found"));
+          }
+        } else {
+          let command = invoke.message.command.clone();
+          let resolver = invoke.resolver.clone();
+          let handled = manager.run_invoke_handler(invoke);
+          if !handled {
+            resolver.reject(format!("Command {command} not found"));
+          }
+        }
+      }
+    }
+
+    Ok(())
+  }
+
+  /// Evaluates JavaScript on this window.
+  pub fn eval(&self, js: &str) -> crate::Result<()> {
+    self.window.dispatcher.eval_script(js).map_err(Into::into)
+  }
+
+  /// Register a JS event listener and return its identifier.
+  pub(crate) fn listen_js(
+    &self,
+    window_label: Option<String>,
+    event: String,
+    handler: CallbackFn,
+  ) -> crate::Result<usize> {
+    let event_id = rand::random();
+
+    self.eval(&crate::event::listen_js(
+      self.manager().event_listeners_object_name(),
+      format!("'{}'", event),
+      event_id,
+      window_label.clone(),
+      format!("window['_{}']", handler.0),
+    ))?;
+
+    self
+      .js_event_listeners
+      .lock()
+      .unwrap()
+      .entry(JsEventListenerKey {
+        window_label,
+        event,
+      })
+      .or_insert_with(Default::default)
+      .insert(event_id);
+
+    Ok(event_id)
+  }
+
+  /// Unregister a JS event listener.
+  pub(crate) fn unlisten_js(&self, event: String, id: usize) -> crate::Result<()> {
+    self.eval(&crate::event::unlisten_js(
+      self.manager().event_listeners_object_name(),
+      event,
+      id,
+    ))?;
+
+    let mut empty = None;
+    let mut js_listeners = self.js_event_listeners.lock().unwrap();
+    let iter = js_listeners.iter_mut();
+    for (key, ids) in iter {
+      if ids.contains(&id) {
+        ids.remove(&id);
+        if ids.is_empty() {
+          empty.replace(key.clone());
+        }
+        break;
+      }
+    }
+
+    if let Some(key) = empty {
+      js_listeners.remove(&key);
+    }
+
+    Ok(())
+  }
+
+  /// Whether this window registered a listener to an event from the given window and event name.
+  pub(crate) fn has_js_listener(&self, window_label: Option<String>, event: &str) -> bool {
+    self
+      .js_event_listeners
+      .lock()
+      .unwrap()
+      .contains_key(&JsEventListenerKey {
+        window_label,
+        event: event.into(),
+      })
+  }
+
+  /// Opens the developer tools window (Web Inspector).
+  /// The devtools is only enabled on debug builds or with the `devtools` feature flag.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS:** Only supported on macOS 10.15+.
+  /// This is a private API on macOS, so you cannot use this if your application will be published on the App Store.
+  ///
+  /// # Examples
+  ///
+  /// ```rust,no_run
+  /// use tauri::Manager;
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     #[cfg(debug_assertions)]
+  ///     app.get_window("main").unwrap().open_devtools();
+  ///     Ok(())
+  ///   });
+  /// ```
+  #[cfg(any(debug_assertions, feature = "devtools"))]
+  #[cfg_attr(doc_cfg, doc(cfg(any(debug_assertions, feature = "devtools"))))]
+  pub fn open_devtools(&self) {
+    self.window.dispatcher.open_devtools();
+  }
+
+  /// Closes the developer tools window (Web Inspector).
+  /// The devtools is only enabled on debug builds or with the `devtools` feature flag.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS:** Only supported on macOS 10.15+.
+  /// This is a private API on macOS, so you cannot use this if your application will be published on the App Store.
+  /// - **Windows:** Unsupported.
+  ///
+  /// # Examples
+  ///
+  /// ```rust,no_run
+  /// use tauri::Manager;
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     #[cfg(debug_assertions)]
+  ///     {
+  ///       let window = app.get_window("main").unwrap();
+  ///       window.open_devtools();
+  ///       std::thread::spawn(move || {
+  ///         std::thread::sleep(std::time::Duration::from_secs(10));
+  ///         window.close_devtools();
+  ///       });
+  ///     }
+  ///     Ok(())
+  ///   });
+  /// ```
+  #[cfg(any(debug_assertions, feature = "devtools"))]
+  #[cfg_attr(doc_cfg, doc(cfg(any(debug_assertions, feature = "devtools"))))]
+  pub fn close_devtools(&self) {
+    self.window.dispatcher.close_devtools();
+  }
+
+  /// Checks if the developer tools window (Web Inspector) is opened.
+  /// The devtools is only enabled on debug builds or with the `devtools` feature flag.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **macOS:** Only supported on macOS 10.15+.
+  /// This is a private API on macOS, so you cannot use this if your application will be published on the App Store.
+  /// - **Windows:** Unsupported.
+  ///
+  /// # Examples
+  ///
+  /// ```rust,no_run
+  /// use tauri::Manager;
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     #[cfg(debug_assertions)]
+  ///     {
+  ///       let window = app.get_window("main").unwrap();
+  ///       if !window.is_devtools_open() {
+  ///         window.open_devtools();
+  ///       }
+  ///     }
+  ///     Ok(())
+  ///   });
+  /// ```
+  #[cfg(any(debug_assertions, feature = "devtools"))]
+  #[cfg_attr(doc_cfg, doc(cfg(any(debug_assertions, feature = "devtools"))))]
+  pub fn is_devtools_open(&self) -> bool {
+    self
+      .window
+      .dispatcher
+      .is_devtools_open()
+      .unwrap_or_default()
+  }
+}
+
+/// Event system APIs.
+impl<R: Runtime> Window<R> {
+  /// Emits an event to both the JavaScript and the Rust listeners.
+  ///
+  /// This API is a combination of [`Self::trigger`] and [`Self::emit`].
+  ///
+  /// # Examples
+  /// ```
+  /// use tauri::Manager;
+  ///
+  /// #[tauri::command]
+  /// fn download(window: tauri::Window) {
+  ///   window.emit_and_trigger("download-started", ());
+  ///
+  ///   for i in 1..100 {
+  ///     std::thread::sleep(std::time::Duration::from_millis(150));
+  ///     // emit a download progress event to all listeners
+  ///     window.emit_and_trigger("download-progress", i);
+  ///   }
+  /// }
+  /// ```
+  pub fn emit_and_trigger<S: Serialize + Clone>(
+    &self,
+    event: &str,
+    payload: S,
+  ) -> crate::Result<()> {
+    self.trigger(event, Some(serde_json::to_string(&payload)?));
+    self.emit(event, payload)
+  }
+
+  pub(crate) fn emit_internal<S: Serialize>(
+    &self,
+    event: &str,
+    source_window_label: Option<&str>,
+    payload: S,
+  ) -> crate::Result<()> {
+    self.eval(&format!(
+      "(function () {{ const fn = window['{}']; fn && fn({{event: {}, windowLabel: {}, payload: {}}}) }})()",
+      self.manager.event_emit_function_name(),
+      serde_json::to_string(event)?,
+      serde_json::to_string(&source_window_label)?,
+      serde_json::to_value(payload)?,
+    ))?;
+    Ok(())
+  }
+
+  /// Emits an event to the JavaScript listeners on the current window or globally.
+  ///
+  /// # Examples
+  /// ```
+  /// use tauri::Manager;
+  ///
+  /// #[tauri::command]
+  /// fn download(window: tauri::Window) {
+  ///   for i in 1..100 {
+  ///     std::thread::sleep(std::time::Duration::from_millis(150));
+  ///     // emit a download progress event to all listeners registed in the webview
+  ///     window.emit("download-progress", i);
+  ///   }
+  /// }
+  /// ```
+  pub fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) -> crate::Result<()> {
+    self
+      .manager
+      .emit_filter(event, Some(self.label()), payload, |w| {
+        w.has_js_listener(None, event) || w.has_js_listener(Some(self.label().into()), event)
+      })?;
+    Ok(())
+  }
+
+  /// Listen to an event on this window.
+  ///
+  /// This listener only receives events that are triggered using the
+  /// [`trigger`](Window#method.trigger) and [`emit_and_trigger`](Window#method.emit_and_trigger) methods or
+  /// the `appWindow.emit` function from the @tauri-apps/api `window` module.
+  ///
+  /// # Examples
+  /// ```
+  /// use tauri::Manager;
+  ///
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     let window = app.get_window("main").unwrap();
+  ///     window.listen("component-loaded", move |event| {
+  ///       println!("window just loaded a component");
+  ///     });
+  ///
+  ///     Ok(())
+  ///   });
+  /// ```
+  pub fn listen<F>(&self, event: impl Into<String>, handler: F) -> EventHandler
+  where
+    F: Fn(Event) + Send + 'static,
+  {
+    let label = self.window.label.clone();
+    self.manager.listen(event.into(), Some(label), handler)
+  }
+
+  /// Unlisten to an event on this window.
+  ///
+  /// # Examples
+  /// ```
+  /// use tauri::Manager;
+  ///
+  /// tauri::Builder::default()
+  ///   .setup(|app| {
+  ///     let window = app.get_window("main").unwrap();
+  ///     let window_ = window.clone();
+  ///     let handler = window.listen("component-loaded", move |event| {
+  ///       println!("window just loaded a component");
+  ///
+  ///       // we no longer need to listen to the event
+  ///       // we also could have used `window.once` instead
+  ///       window_.unlisten(event.id());
+  ///     });
+  ///
+  ///     // stop listening to the event when you do not need it anymore
+  ///     window.unlisten(handler);
+  ///
+  ///
+  ///     Ok(())
+  ///   });
+  /// ```
+  pub fn unlisten(&self, handler_id: EventHandler) {
+    self.manager.unlisten(handler_id)
+  }
+
+  /// Listen to an event on this window a single time.
+  ///
+  /// See [`Self::listen`] for more information.
+  pub fn once<F>(&self, event: impl Into<String>, handler: F) -> EventHandler
+  where
+    F: FnOnce(Event) + Send + 'static,
+  {
+    let label = self.window.label.clone();
+    self.manager.once(event.into(), Some(label), handler)
+  }
+
+  /// Triggers an event to the Rust listeners on this window or global listeners.
+  ///
+  /// # Examples
+  /// ```
+  /// use tauri::Manager;
+  ///
+  /// #[tauri::command]
+  /// fn download(window: tauri::Window) {
+  ///   for i in 1..100 {
+  ///     std::thread::sleep(std::time::Duration::from_millis(150));
+  ///     // emit a download progress event to all listeners registed on `window` in Rust
+  ///     window.trigger("download-progress", Some(i.to_string()));
+  ///   }
+  /// }
+  /// ```
+  pub fn trigger(&self, event: &str, data: Option<String>) {
+    let label = self.window.label.clone();
+    self.manager.trigger(event, Some(label), data)
+  }
+}
+
+/// The [`WindowEffectsConfig`] object builder
+#[derive(Default)]
+pub struct EffectsBuilder(WindowEffectsConfig);
+impl EffectsBuilder {
+  /// Create a new [`WindowEffectsConfig`] builder
+  pub fn new() -> Self {
+    Self(WindowEffectsConfig::default())
+  }
+
+  /// Adds effect to the [`WindowEffectsConfig`] `effects` field
+  pub fn effect(mut self, effect: Effect) -> Self {
+    self.0.effects.push(effect);
+    self
+  }
+
+  /// Adds effects to the [`WindowEffectsConfig`] `effects` field
+  pub fn effects<I: IntoIterator<Item = Effect>>(mut self, effects: I) -> Self {
+    self.0.effects.extend(effects);
+    self
+  }
+
+  /// Clears the [`WindowEffectsConfig`] `effects` field
+  pub fn clear_effects(mut self) -> Self {
+    self.0.effects.clear();
+    self
+  }
+
+  /// Sets `state` field for the [`WindowEffectsConfig`] **macOS Only**
+  pub fn state(mut self, state: EffectState) -> Self {
+    self.0.state = Some(state);
+    self
+  }
+  /// Sets `radius` field fo the [`WindowEffectsConfig`] **macOS Only**
+  pub fn radius(mut self, radius: f64) -> Self {
+    self.0.radius = Some(radius);
+    self
+  }
+  /// Sets `color` field fo the [`WindowEffectsConfig`] **Windows Only**
+  pub fn color(mut self, color: Color) -> Self {
+    self.0.color = Some(color);
+    self
+  }
+
+  /// Builds a [`WindowEffectsConfig`]
+  pub fn build(self) -> WindowEffectsConfig {
+    self.0
+  }
+}
+
+impl From<WindowEffectsConfig> for EffectsBuilder {
+  fn from(value: WindowEffectsConfig) -> Self {
+    Self(value)
+  }
+}
+
+pub(crate) const IPC_SCOPE_DOES_NOT_ALLOW: &str = "Not allowed by the scope";
+
+pub(crate) fn ipc_scope_not_found_error_message(label: &str, url: &str) -> String {
+  format!("Scope not defined for window `{label}` and URL `{url}`. See https://tauri.app/v1/api/config/#securityconfig.dangerousremotedomainipcaccess and https://docs.rs/tauri/1/tauri/scope/struct.IpcScope.html#method.configure_remote_access")
+}
+
+pub(crate) fn ipc_scope_window_error_message(label: &str) -> String {
+  format!("Scope not defined for window `{}`. See https://tauri.app/v1/api/config/#securityconfig.dangerousremotedomainipcaccess and https://docs.rs/tauri/1/tauri/scope/struct.IpcScope.html#method.configure_remote_access", label)
+}
+
+pub(crate) fn ipc_scope_domain_error_message(url: &str) -> String {
+  format!("Scope not defined for URL `{url}`. See https://tauri.app/v1/api/config/#securityconfig.dangerousremotedomainipcaccess and https://docs.rs/tauri/1/tauri/scope/struct.IpcScope.html#method.configure_remote_access")
 }
 
 #[cfg(test)]

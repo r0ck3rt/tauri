@@ -1,5 +1,351 @@
 # Changelog
 
+## \[2.0.0-alpha.5]
+
+- [`2d5378bf`](https://www.github.com/tauri-apps/tauri/commit/2d5378bfc1ba817ee2f331b41738a90e5997e5e8)([#6717](https://www.github.com/tauri-apps/tauri/pull/6717)) Removed the `UpdaterSettings::dialog` field.
+- [`6a6b1388`](https://www.github.com/tauri-apps/tauri/commit/6a6b1388ea5787aea4c0e0b0701a4772087bbc0f)([#6853](https://www.github.com/tauri-apps/tauri/pull/6853)) Correctly escape XML for resource files in WiX bundler.
+- [`3188f376`](https://www.github.com/tauri-apps/tauri/commit/3188f3764978c6d1452ee31d5a91469691e95094)([#6883](https://www.github.com/tauri-apps/tauri/pull/6883)) Bump the MSRV to 1.65.
+- [`422b4817`](https://www.github.com/tauri-apps/tauri/commit/422b48179856504e980a156500afa8e22c44d357)([#6871](https://www.github.com/tauri-apps/tauri/pull/6871)) Added the following languages to the NSIS bundler:
+
+  - `Spanish`
+  - `SpanishInternational`
+- [`2915bd06`](https://www.github.com/tauri-apps/tauri/commit/2915bd068ed40dc01a363b69212c6b6f2d3ec01e)([#6854](https://www.github.com/tauri-apps/tauri/pull/6854)) Correctly escape arguments in NSIS script to fix bundling apps that use non-default WebView2 install modes.
+
+## \[2.0.0-alpha.4]
+
+- Added `android` configuration object under `tauri > bundle`.
+  - Bumped due to a bump in tauri-utils.
+  - [db4c9dc6](https://www.github.com/tauri-apps/tauri/commit/db4c9dc655e07ee2184fe04571f500f7910890cd) feat(core): add option to configure Android's minimum SDK version ([#6651](https://www.github.com/tauri-apps/tauri/pull/6651)) on 2023-04-07
+
+## \[2.0.0-alpha.3]
+
+- Pull changes from Tauri 1.3 release.
+  - [](https://www.github.com/tauri-apps/tauri/commit/undefined)  on undefined
+
+## \[2.0.0-alpha.2]
+
+- Added the `shadow` option to the window configuration and `set_shadow` option to the `window` allow list.
+  - Bumped due to a bump in tauri-utils.
+  - [a81750d7](https://www.github.com/tauri-apps/tauri/commit/a81750d779bc72f0fdb7de90b7fbddfd8049b328) feat(core): add shadow APIs ([#6206](https://www.github.com/tauri-apps/tauri/pull/6206)) on 2023-02-08
+
+## \[2.0.0-alpha.1]
+
+- Bump the MSRV to 1.64.
+  - [7eb9aa75](https://www.github.com/tauri-apps/tauri/commit/7eb9aa75cfd6a3176d3f566fdda02d88aa529b0f) Update gtk to 0.16 ([#6155](https://www.github.com/tauri-apps/tauri/pull/6155)) on 2023-01-30
+
+## \[2.0.0-alpha.0]
+
+- First mobile alpha release!
+  - [fa3a1098](https://www.github.com/tauri-apps/tauri/commit/fa3a10988a03aed1b66fb17d893b1a9adb90f7cd) feat(ci): prepare 2.0.0-alpha.0 ([#5786](https://www.github.com/tauri-apps/tauri/pull/5786)) on 2022-12-08
+
+## \[1.3.0]
+
+### New Features
+
+- [`35cd751a`](https://www.github.com/tauri-apps/tauri/commit/35cd751adc6fef1f792696fa0cfb471b0bf99374)([#5176](https://www.github.com/tauri-apps/tauri/pull/5176)) Added `desktop_template` option on `DebianSettings`.
+- [`29488205`](https://www.github.com/tauri-apps/tauri/commit/2948820579d20dfaa0861c2f0a58bd7737a7ffd1)([#6867](https://www.github.com/tauri-apps/tauri/pull/6867)) Allow specifying custom language files of Tauri's custom messages for the NSIS installer
+- [`e092f799`](https://www.github.com/tauri-apps/tauri/commit/e092f799469ff32c7d1595d0f07d06fd2dab5c29)([#6887](https://www.github.com/tauri-apps/tauri/pull/6887)) Add `nsis > template` option to specify custom NSIS installer template.
+- [`df89ccc1`](https://www.github.com/tauri-apps/tauri/commit/df89ccc1912db6b81d43d56c9e6d66980ece2e8d)([#6955](https://www.github.com/tauri-apps/tauri/pull/6955)) For NSIS, Add support for `/P` to install or uninstall in passive mode, `/R` to (re)start the app and `/NS` to disable creating shortcuts in `silent` and `passive` modes.
+
+### Enhancements
+
+- [`3327dd64`](https://www.github.com/tauri-apps/tauri/commit/3327dd641d929ff7457a37cd7e557b45314b9755)([#7081](https://www.github.com/tauri-apps/tauri/pull/7081)) Remove macOS app bundles from the output if they are not requested by the user.
+- [`fc7f9eba`](https://www.github.com/tauri-apps/tauri/commit/fc7f9ebada959e555f4cff617286f52ce463f29e)([#7001](https://www.github.com/tauri-apps/tauri/pull/7001)) Added Copyright field as BrandingText to the NSIS bundler.
+- [`540ddd4e`](https://www.github.com/tauri-apps/tauri/commit/540ddd4e6a4926c26507a8d06fbe72a5895f8509)([#6906](https://www.github.com/tauri-apps/tauri/pull/6906)) Added Dutch language support to the NSIS bundler.
+- [`b257bebf`](https://www.github.com/tauri-apps/tauri/commit/b257bebf9e478d616690ba1c357dc7f071ea7b31)([#6906](https://www.github.com/tauri-apps/tauri/pull/6906)) Added Japanese language support to the NSIS bundler.
+- [`61e3ad89`](https://www.github.com/tauri-apps/tauri/commit/61e3ad89e93b060236d94459fb2d15938c7ce092)([#7010](https://www.github.com/tauri-apps/tauri/pull/7010)) Added Korean language support to the NSIS bundler.
+- [`21d5eb84`](https://www.github.com/tauri-apps/tauri/commit/21d5eb84ab2372466a3254e656e2ec9b346a2db7)([#6965](https://www.github.com/tauri-apps/tauri/pull/6965)) Added Persian language support to the NSIS bundler.
+- [`df89ccc1`](https://www.github.com/tauri-apps/tauri/commit/df89ccc1912db6b81d43d56c9e6d66980ece2e8d)([#6955](https://www.github.com/tauri-apps/tauri/pull/6955)) NSIS `silent` and `passive` installer/updater will auto-kill the app if its running.
+- [`43858a31`](https://www.github.com/tauri-apps/tauri/commit/43858a319725d696a298770982cc04e6dd0befb3)([#7038](https://www.github.com/tauri-apps/tauri/pull/7038)) Added Swedish language support to the NSIS bundler.
+- [`ac183948`](https://www.github.com/tauri-apps/tauri/commit/ac183948d610a01ac602846cddd80563c86c45af)([#7018](https://www.github.com/tauri-apps/tauri/pull/7018)) Added Turkish language support to the NSIS bundler.
+- [`60334f9e`](https://www.github.com/tauri-apps/tauri/commit/60334f9e02f6fdf1510e234aacc8c23382a05554)([#6859](https://www.github.com/tauri-apps/tauri/pull/6859)) NSIS installer will now check if a previous WiX `.msi` installation exist and will prompt users to uninstall it.
+- [`db7c5fbf`](https://www.github.com/tauri-apps/tauri/commit/db7c5fbf2e86f3694720f65834eb2c258b7c1291)([#7143](https://www.github.com/tauri-apps/tauri/pull/7143)) Remove `attohttpc` in favor of `ureq`.
+
+### Bug Fixes
+
+- [`0302138f`](https://www.github.com/tauri-apps/tauri/commit/0302138f2fa8c869888f07006eda333a8dd2ba7f)([#6992](https://www.github.com/tauri-apps/tauri/pull/6992)) -   Updated the AppImage bundler to follow symlinks for `/usr/lib*`.
+  - Fixes AppImage bundling for Void Linux, which was failing to bundle webkit2gtk because the `/usr/lib64` is a symlink to `/usr/lib`.
+- [`1b8001b8`](https://www.github.com/tauri-apps/tauri/commit/1b8001b8b8757b6914e9b61a71ad1e092a5fa754)([#7056](https://www.github.com/tauri-apps/tauri/pull/7056)) Fix incorrect estimated app size for NSIS bundler when installed to a non-empty directory.
+- [`df89ccc1`](https://www.github.com/tauri-apps/tauri/commit/df89ccc1912db6b81d43d56c9e6d66980ece2e8d)([#6955](https://www.github.com/tauri-apps/tauri/pull/6955)) Fix NSIS installer disabling `do not uninstall` button and silent installer aborting, if `allowDowngrades` was disabled even when we are not downgrading.
+- [`17da87d3`](https://www.github.com/tauri-apps/tauri/commit/17da87d3cd7922da18e8e2e41fcb8519f5c45f50)([#7036](https://www.github.com/tauri-apps/tauri/pull/7036)) Fix NSIS bundler failing to build when `productName` contained chinsese characters.
+- [`4d4b72ba`](https://www.github.com/tauri-apps/tauri/commit/4d4b72ba38c5cea5cade501e383d946208e21deb)([#7086](https://www.github.com/tauri-apps/tauri/pull/7086)) Fix missing quote in Japanese NSIS language file.
+- [`3cc295e9`](https://www.github.com/tauri-apps/tauri/commit/3cc295e99762d39a4a118db9b1f811f0503fe9e1)([#6928](https://www.github.com/tauri-apps/tauri/pull/6928)) Fix NSIS installer not using the old installation path as a default when using `perMachine` or `currentUser` install modes. Also fixes NSIS not respecting the `/D` flag which used to set the installation directory from command line.
+- [`df89ccc1`](https://www.github.com/tauri-apps/tauri/commit/df89ccc1912db6b81d43d56c9e6d66980ece2e8d)([#6955](https://www.github.com/tauri-apps/tauri/pull/6955)) Fix NSIS silent installer not creating Desktop and StartMenu shortcuts. Pass `/NS` to disable creating them.
+
+## \[1.2.1]
+
+- Correctly escape XML for resource files in WiX bundler.
+  - [6a6b1388](https://www.github.com/tauri-apps/tauri/commit/6a6b1388ea5787aea4c0e0b0701a4772087bbc0f) fix(bundler): correctly escape resource xml, fixes [#6853](https://www.github.com/tauri-apps/tauri/pull/6853) ([#6855](https://www.github.com/tauri-apps/tauri/pull/6855)) on 2023-05-04
+
+- Added the following languages to the NSIS bundler:
+
+- `Spanish`
+
+- `SpanishInternational`
+
+- [422b4817](https://www.github.com/tauri-apps/tauri/commit/422b48179856504e980a156500afa8e22c44d357) Add Spanish and SpanishInternational languages ([#6871](https://www.github.com/tauri-apps/tauri/pull/6871)) on 2023-05-06
+
+- Correctly escape arguments in NSIS script to fix bundling apps that use non-default WebView2 install modes.
+  - [2915bd06](https://www.github.com/tauri-apps/tauri/commit/2915bd068ed40dc01a363b69212c6b6f2d3ec01e) fix(bundler): Fix webview install modes in NSIS bundler ([#6854](https://www.github.com/tauri-apps/tauri/pull/6854)) on 2023-05-04
+
+## \[1.2.0]
+
+- Add dylib support to `tauri.bundle.macOS.frameworks`.
+  - [ce76d95a](https://www.github.com/tauri-apps/tauri/commit/ce76d95ab186f4556166a2a22360067eab000fc8) feat(tauri-cli): add dylib support to `tauri.bundle.macOS.frameworks`, closes [#4615](https://www.github.com/tauri-apps/tauri/pull/4615) ([#5732](https://www.github.com/tauri-apps/tauri/pull/5732)) on 2022-12-31
+- Added support for pre-release identifiers and build numbers for the `.msi` bundle target. Only one of each can be used and it must be numeric only. The version must still be semver compatible according to https://semver.org/.
+  - [20ff1f45](https://www.github.com/tauri-apps/tauri/commit/20ff1f45968f1cfd30d093bb58255b348fbdfb98) feat(bundler): Add support for numeric-only build numbers in msi version ([#6096](https://www.github.com/tauri-apps/tauri/pull/6096)) on 2023-01-19
+- On Windows, printing consistent paths on Windows with backslashs only.
+  - [9da99607](https://www.github.com/tauri-apps/tauri/commit/9da996073ff07d4b59668a5315d40e9bc578e340) fix(cli): fix printing paths on Windows ([#6137](https://www.github.com/tauri-apps/tauri/pull/6137)) on 2023-01-26
+- Fixed error during bundling process for the appimage target on subsequent bundling attempts.
+  - [2f70d8da](https://www.github.com/tauri-apps/tauri/commit/2f70d8da2bc079400bb49e6793f755306049aab2) fix: symlink issue bundling for linux [#5781](https://www.github.com/tauri-apps/tauri/pull/5781) ([#6391](https://www.github.com/tauri-apps/tauri/pull/6391)) on 2023-03-17
+- Fixes DMG bundling not finding bundle to set icon position.
+  - [7489f966](https://www.github.com/tauri-apps/tauri/commit/7489f9669734a48be063907696b0f200a293ccb6) fix(bundler): fix problem of macOS bunder while i18n is set, closes [#6614](https://www.github.com/tauri-apps/tauri/pull/6614) ([#6615](https://www.github.com/tauri-apps/tauri/pull/6615)) on 2023-04-03
+- Use escaping on Handlebars templates.
+  - [6d6b6e65](https://www.github.com/tauri-apps/tauri/commit/6d6b6e653ea70fc02794f723092cdc860995c259) feat: configure escaping on handlebars templates ([#6678](https://www.github.com/tauri-apps/tauri/pull/6678)) on 2023-05-02
+- Bump minimum supported Rust version to 1.60.
+  - [5fdc616d](https://www.github.com/tauri-apps/tauri/commit/5fdc616df9bea633810dcb814ac615911d77222c) feat: Use the zbus-backed of notify-rust ([#6332](https://www.github.com/tauri-apps/tauri/pull/6332)) on 2023-03-31
+- Add initial support for building `nsis` bundles on non-Windows platforms.
+  - [60e6f6c3](https://www.github.com/tauri-apps/tauri/commit/60e6f6c3f1605f3064b5bb177992530ff788ccf0) feat(bundler): Add support for creating NSIS bundles on unix hosts ([#5788](https://www.github.com/tauri-apps/tauri/pull/5788)) on 2023-01-19
+- Add `nsis` bundle target
+  - [c94e1326](https://www.github.com/tauri-apps/tauri/commit/c94e1326a7c0767a13128a8b1d327a00156ece12) feat(bundler): add `nsis`, closes [#4450](https://www.github.com/tauri-apps/tauri/pull/4450), closes [#2319](https://www.github.com/tauri-apps/tauri/pull/2319) ([#4674](https://www.github.com/tauri-apps/tauri/pull/4674)) on 2023-01-03
+- On Windows, the `msi` installer's `Launch App` checkbox will be checked by default.
+  - [89602cdc](https://www.github.com/tauri-apps/tauri/commit/89602cdce34f3ea5b4a9b8921dc04a197f2d7de8) feat(bundler): check `Launch app` by default for WiX, closes [#5859](https://www.github.com/tauri-apps/tauri/pull/5859) ([#5871](https://www.github.com/tauri-apps/tauri/pull/5871)) on 2022-12-26
+
+## \[1.1.2]
+
+- Fixes blank taskbar icon on WiX updates.
+  - [9093ef33](https://www.github.com/tauri-apps/tauri/commit/9093ef3314c27d2295b4266893fd2290c1bdfb6a) fix(bundler): blank taskbar icon on WiX update, closes [#5631](https://www.github.com/tauri-apps/tauri/pull/5631) ([#5779](https://www.github.com/tauri-apps/tauri/pull/5779)) on 2022-12-08
+
+## \[1.1.1]
+
+- Fix `allowlist > app > show/hide` always disabled when `allowlist > app > all: false`.
+  - Bumped due to a bump in tauri-utils.
+  - [bb251087](https://www.github.com/tauri-apps/tauri/commit/bb2510876d0bdff736d36bf3a465cdbe4ad2b90c) fix(core): extend allowlist with `app`'s allowlist, closes [#5650](https://www.github.com/tauri-apps/tauri/pull/5650) ([#5652](https://www.github.com/tauri-apps/tauri/pull/5652)) on 2022-11-18
+
+## \[1.1.0]
+
+- Use correct code `ja-JP` for japanese instead of `jp-JP`.
+  - [d4cac202](https://www.github.com/tauri-apps/tauri/commit/d4cac202923fc34962721413f7051bca50002809) fix(bundler): fix japanese lang code, closes [#5342](https://www.github.com/tauri-apps/tauri/pull/5342) ([#5346](https://www.github.com/tauri-apps/tauri/pull/5346)) on 2022-10-04
+- Fix WiX DLL load on Windows Server.
+  - [7aaf27ce](https://www.github.com/tauri-apps/tauri/commit/7aaf27ce5f026547ed490731e37cfc917458bbd6) fix(bundler): load WiX DLLs on Github Actions ([#5552](https://www.github.com/tauri-apps/tauri/pull/5552)) on 2022-11-04
+- - [7d9aa398](https://www.github.com/tauri-apps/tauri/commit/7d9aa3987efce2d697179ffc33646d086c68030c) feat: bump MSRV to 1.59 ([#5296](https://www.github.com/tauri-apps/tauri/pull/5296)) on 2022-09-28
+- Add `tauri.conf.json > bundle > publisher` field to specify the app publisher.
+  - [628285c1](https://www.github.com/tauri-apps/tauri/commit/628285c1cf43f03ed62378f3b6cc0c991317526f) feat(bundler): add `publisher` field, closes [#5273](https://www.github.com/tauri-apps/tauri/pull/5273) ([#5283](https://www.github.com/tauri-apps/tauri/pull/5283)) on 2022-09-28
+- Clear environment variables on the WiX light.exe and candle.exe commands to avoid "Windows Installer Service could not be accessed" error. Variables prefixed with `TAURI` are propagated.
+  - [7c0fa1f3](https://www.github.com/tauri-apps/tauri/commit/7c0fa1f3f93943b87a0042b5ba3bd6bb4099304a) fix(bundler): clear env before calling wix, closes [#4791](https://www.github.com/tauri-apps/tauri/pull/4791) ([#4819](https://www.github.com/tauri-apps/tauri/pull/4819)) on 2022-10-03
+
+## \[1.0.7]
+
+- Add missing allowlist config for `set_cursor_grab`, `set_cursor_visible`, `set_cursor_icon` and `set_cursor_position` APIs.
+  - Bumped due to a bump in tauri-utils.
+  - [c764408d](https://www.github.com/tauri-apps/tauri/commit/c764408da7fae123edd41115bda42fa75a4731d2) fix: Add missing allowlist config for cursor apis, closes [#5207](https://www.github.com/tauri-apps/tauri/pull/5207) ([#5211](https://www.github.com/tauri-apps/tauri/pull/5211)) on 2022-09-16
+
+## \[1.0.6]
+
+- Avoid re-downloading AppImage build tools on every build.
+  - [02462052](https://www.github.com/tauri-apps/tauri/commit/024620529ed7c6cc601501db45abb7257f0b58f4) fix(bundler): cache appimage bundle tools ([#4790](https://www.github.com/tauri-apps/tauri/pull/4790)) on 2022-07-30
+- Add `fips_compliant` configuration option for WiX.
+  - [d88b9de7](https://www.github.com/tauri-apps/tauri/commit/d88b9de7aaeaaa2e42e4795dbc2b8642b5ae7a50) feat(core): add `fips_compliant` wix config option, closes [#4541](https://www.github.com/tauri-apps/tauri/pull/4541) ([#4843](https://www.github.com/tauri-apps/tauri/pull/4843)) on 2022-08-04
+
+## \[1.0.5]
+
+- Correctly fill the architecture when building Debian packages targeting ARM64 (aarch64).
+  - [635f23b8](https://www.github.com/tauri-apps/tauri/commit/635f23b88adbb8726d628f67840709cd870836dc) fix(bundler): correctly set debian architecture for aarch64 ([#4700](https://www.github.com/tauri-apps/tauri/pull/4700)) on 2022-07-17
+
+## \[1.0.4]
+
+- Reduce the amount of allocations when converting cases.
+  - [bc370e32](https://www.github.com/tauri-apps/tauri/commit/bc370e326810446e15b1f50fb962b980114ba16b) feat: reduce the amount of `heck`-related allocations ([#4634](https://www.github.com/tauri-apps/tauri/pull/4634)) on 2022-07-11
+- Automatically load WiX extensions referenced in fragments.
+  - [261d1bc9](https://www.github.com/tauri-apps/tauri/commit/261d1bc9d4a0ecf4dda16a47a1652efeabffc378) feat(bundler): load WiX extensions used on fragments, closes [#4546](https://www.github.com/tauri-apps/tauri/pull/4546) ([#4656](https://www.github.com/tauri-apps/tauri/pull/4656)) on 2022-07-12
+- Fix AppImage builds by pinning the linuxdeploy version.
+  - [89cb2526](https://www.github.com/tauri-apps/tauri/commit/89cb2526409d3b88e0aa15b93e4d26b09d9c0373) fix(bundler): pin linuxdeploy version on 2022-07-14
+- Use `Bin_${sidecarFilename}` as the `Id` of sidecar file on WiX so you can reference it in your WiX fragments.
+  - [597c9820](https://www.github.com/tauri-apps/tauri/commit/597c98203cad9b45949816659f5f59976328585a) feat(bundler): use known Id for the sidecar files on WiX, ref [#4546](https://www.github.com/tauri-apps/tauri/pull/4546) ([#4658](https://www.github.com/tauri-apps/tauri/pull/4658)) on 2022-07-12
+
+## \[1.0.3]
+
+- Build AppImages inside the `src-tauri/target` folder rather than `~/.cache/tauri`. Making it easier to clean and rebuild from scratch.
+  - [8dd03e69](https://www.github.com/tauri-apps/tauri/commit/8dd03e69b0766eaef0b9f9fdcfe2ccbc9d0a10d1) fix(bundler): Build AppImages inside the target folder ([#4521](https://www.github.com/tauri-apps/tauri/pull/4521)) on 2022-07-03
+- Ensure the notarization `RequestUUID` and `Status` parser works on macOS 10.13.6+.
+  - [23d3d847](https://www.github.com/tauri-apps/tauri/commit/23d3d847d1b2d0c394d729a84fbeae2936111116) fix(bundler): ensure RequestUUID and Status parser adds a \n, closes [#4549](https://www.github.com/tauri-apps/tauri/pull/4549) ([#4559](https://www.github.com/tauri-apps/tauri/pull/4559)) on 2022-07-03
+  - [f7c59ecf](https://www.github.com/tauri-apps/tauri/commit/f7c59ecfc85a90a0ff5c22da1a8b0e93d3663c86) fix(bundler): support macOS 10.13.6+ on notarization, closes [#4549](https://www.github.com/tauri-apps/tauri/pull/4549) ([#4593](https://www.github.com/tauri-apps/tauri/pull/4593)) on 2022-07-05
+
+## \[1.0.2]
+
+- Enhance the `DownloadedBootstrapper` Webview2 install mode compatibility with Windows 8.
+  - [3df6c8c6](https://www.github.com/tauri-apps/tauri/commit/3df6c8c6454a052047b9f766691048860b50ea70) feat(bundler): enable TLS 1.2 before downloading webview2 bootstrapper ([#4543](https://www.github.com/tauri-apps/tauri/pull/4543)) on 2022-06-30
+
+## \[1.0.1]
+
+- Fix AppImage bundling when appimagelauncher is enabled.
+  - [b0133083](https://www.github.com/tauri-apps/tauri/commit/b0133083dd4d22b0b7fdee02000ef8ecab26694b) Fix appimage creation in container when host has appimagelauncher enabled ([#4457](https://www.github.com/tauri-apps/tauri/pull/4457)) on 2022-06-27
+- Fixes AppImage bundler crashes when the file path contains whitespace.
+  - [82eb6e79](https://www.github.com/tauri-apps/tauri/commit/82eb6e79e8098bccd2b3d3581056b5350beb46c6) fix(bundler): Fix appimage bundler crashing if path has spaces ([#4471](https://www.github.com/tauri-apps/tauri/pull/4471)) on 2022-06-26
+- Ensure `usr/lib` is a directory in the AppImage bundle.
+  - [aa0336d6](https://www.github.com/tauri-apps/tauri/commit/aa0336d6c5764f1357d845f2bf3763a89a3771a1) fix(bundler): ensure AppImage usr/lib is a dir ([#4419](https://www.github.com/tauri-apps/tauri/pull/4419)) on 2022-06-21
+- AppImage bundling will now prefer bundling correctly named appindicator library (including `.1` version suffix). With a symlink for compatibility with the old naming.
+  - [bf45ca1d](https://www.github.com/tauri-apps/tauri/commit/bf45ca1df6691c05bdf72c5716cc01e89a7791d4) fix(cli,bundler): prefer AppImage libraries with ABI version ([#4505](https://www.github.com/tauri-apps/tauri/pull/4505)) on 2022-06-29
+- Fix language code for korean (ko-KR).
+  - [08a73acd](https://www.github.com/tauri-apps/tauri/commit/08a73acde877453ca5b45ea7548cdd3d407366a2) fix(bundler): fix language code. closes [#4437](https://www.github.com/tauri-apps/tauri/pull/4437) ([#4444](https://www.github.com/tauri-apps/tauri/pull/4444)) on 2022-06-24
+- Use the plist crate instead of the `PlistBuddy` binary to merge user Info.plist file.
+  - [45076b3e](https://www.github.com/tauri-apps/tauri/commit/45076b3ede4c5a3c14ffc0e4277c2c87639690cb) refactor(bundler): use the `plist` crate to create and merge Info.plist ([#4412](https://www.github.com/tauri-apps/tauri/pull/4412)) on 2022-06-21
+- Validate app version before bundling WiX.
+  - [672174b8](https://www.github.com/tauri-apps/tauri/commit/672174b822fcd2dff4a4aeeab370be3748e13843) feat(bundler): validate version before bundling with WiX ([#4429](https://www.github.com/tauri-apps/tauri/pull/4429)) on 2022-06-21
+- Check if `$HOME\AppData\Local\tauri\WixTools` directory has all the required files and redownload WiX if something is missing.
+  - [956af4f3](https://www.github.com/tauri-apps/tauri/commit/956af4f30f665a1d059aad15d070b4bab9ca49b3) feat(bundler): validate wix toolset files, ref [#4474](https://www.github.com/tauri-apps/tauri/pull/4474) ([#4475](https://www.github.com/tauri-apps/tauri/pull/4475)) on 2022-06-26
+- Added webview install mode options.
+  - [2ca762d2](https://www.github.com/tauri-apps/tauri/commit/2ca762d207030a892a6d128b519e150e2d733468) feat(bundler): extend webview2 installation options, closes [#2882](https://www.github.com/tauri-apps/tauri/pull/2882) [#2452](https://www.github.com/tauri-apps/tauri/pull/2452) ([#4466](https://www.github.com/tauri-apps/tauri/pull/4466)) on 2022-06-26
+
+## \[1.0.0]
+
+- Upgrade to `stable`!
+  - [f4bb30cc](https://www.github.com/tauri-apps/tauri/commit/f4bb30cc73d6ba9b9ef19ef004dc5e8e6bb901d3) feat(covector): prepare for v1 ([#4351](https://www.github.com/tauri-apps/tauri/pull/4351)) on 2022-06-15
+
+## \[1.0.0-rc.10]
+
+- Bundle the tray library file (`.so` extension) in the AppImage if the `TRAY_LIBRARY_PATH` environment variable is set.
+  - [34552444](https://www.github.com/tauri-apps/tauri/commit/3455244436578003a5fbb447b039e5c8971152ec) feat(cli): bundle appindicator library in the AppImage, closes [#3859](https://www.github.com/tauri-apps/tauri/pull/3859) ([#4267](https://www.github.com/tauri-apps/tauri/pull/4267)) on 2022-06-07
+- Bundle additional gstreamer files needed for audio and video playback if the `APPIMAGE_BUNDLE_GSTREAMER` environment variable is set.
+  - [d335fae9](https://www.github.com/tauri-apps/tauri/commit/d335fae92cdcbb0ee18aad4e54558914afa3e778) feat(bundler): bundle additional gstreamer files, closes [#4092](https://www.github.com/tauri-apps/tauri/pull/4092) ([#4271](https://www.github.com/tauri-apps/tauri/pull/4271)) on 2022-06-10
+- Cache bundling tools in a directory shared by all tauri projects. Usually in `$XDG_HOME/.cache/tauri` on Linux and `$HOME\AppData\Local\tauri` on Windows.
+  - [f48b1b0b](https://www.github.com/tauri-apps/tauri/commit/f48b1b0b3bec6a2a85c7dac67a128fa578f7ee15) feat(bundler): cache bundling tools in a common dir for all projects ([#4305](https://www.github.com/tauri-apps/tauri/pull/4305)) on 2022-06-09
+- Pull correct linuxdeploy AppImage when building for 32-bit targets.
+  - [53ae13d9](https://www.github.com/tauri-apps/tauri/commit/53ae13d99a06b786fb4fbeb1a10e934f7be3008c) fix(bundler): Pull correct 32bit linuxdeploy appimage, closes [#4260](https://www.github.com/tauri-apps/tauri/pull/4260) ([#4269](https://www.github.com/tauri-apps/tauri/pull/4269)) on 2022-06-04
+- Copy the `/usr/bin/xdg-open` binary if it exists and the `APPIMAGE_BUNDLE_XDG_OPEN` environment variable is set.
+  - [2322ac11](https://www.github.com/tauri-apps/tauri/commit/2322ac11cf6290c6bf65413048a049c8072f863b) fix(bundler): bundle `/usr/bin/xdg-open` in appimage if open API enabled ([#4265](https://www.github.com/tauri-apps/tauri/pull/4265)) on 2022-06-04
+- On Linux, high-dpi icons are now placed in the correct directory
+  and should be recognized by the desktop environment.
+  - [c2b7c775](https://www.github.com/tauri-apps/tauri/commit/c2b7c7751764d0963362a4b271cd921d6424e5e9) fix: put linux high dpi icons in the correct dir ([#4281](https://www.github.com/tauri-apps/tauri/pull/4281)) on 2022-06-10
+- Only png files from tauri.conf.json > tauri.bundle.icon are used for app icons for linux targets.
+  Previously, all sizes from all source files (10 files using tauricon defaults) were used.
+  This also prevents unexpectedly mixed icons in cases where platform-specific icons are used.
+  - [a6f45d52](https://www.github.com/tauri-apps/tauri/commit/a6f45d5248ec0f4d3876afd8f106998306ea931e) Debian icon no fallback, fixes [#4280](https://www.github.com/tauri-apps/tauri/pull/4280) ([#4282](https://www.github.com/tauri-apps/tauri/pull/4282)) on 2022-06-09
+- Log command output in real time instead of waiting for it to finish.
+  - [76d1eaae](https://www.github.com/tauri-apps/tauri/commit/76d1eaaebda5c8f6b0d41bf6587945e98cd441f3) feat(cli): debug command output in real time ([#4318](https://www.github.com/tauri-apps/tauri/pull/4318)) on 2022-06-12
+
+## \[1.0.0-rc.9]
+
+- Statically link the Visual C++ runtime instead of using a merge module on the installer.
+  - [bb061509](https://www.github.com/tauri-apps/tauri/commit/bb061509fb674bef86ecbc1de3aa8f3e367a9907) refactor(core): statically link vcruntime, closes [#4122](https://www.github.com/tauri-apps/tauri/pull/4122) ([#4227](https://www.github.com/tauri-apps/tauri/pull/4227)) on 2022-05-27
+
+## \[1.0.0-rc.8]
+
+- Use binary arch instead of `x86_64` on the AppImage bundle script.
+  - [6830a739](https://www.github.com/tauri-apps/tauri/commit/6830a739535e920f1857a1946fb69750a6d7b92f) fix(bundler): use binary arch on appimage bundle script ([#4194](https://www.github.com/tauri-apps/tauri/pull/4194)) on 2022-05-23
+- Fixes lost files on upgrade due to wrong implementation to keep shortcuts.
+  - [8539e02f](https://www.github.com/tauri-apps/tauri/commit/8539e02f7fd56cc47b25ed45c8403d66abe262ac) fix(bundler): wix upgrade do not installing new files, closes [#4182](https://www.github.com/tauri-apps/tauri/pull/4182) on 2022-05-21
+
+## \[1.0.0-rc.7]
+
+- Change `tsp` value from `Option<bool>` to `bool`.
+  - [29d8e768](https://www.github.com/tauri-apps/tauri/commit/29d8e768aa0b52e1997c0f5c9e447b80eff47b93) feat(config): adjust schema for documentation website, closes [#4139](https://www.github.com/tauri-apps/tauri/pull/4139) ([#4142](https://www.github.com/tauri-apps/tauri/pull/4142)) on 2022-05-17
+- Fixes processing of resources with glob patterns when there are nested directories on Windows.
+  - [3e702cf8](https://www.github.com/tauri-apps/tauri/commit/3e702cf8b15762cdca43c8d7ff6f6e8ee9670244) fix(bundler): ignore duplicated files in resource iter, closes [#4126](https://www.github.com/tauri-apps/tauri/pull/4126) ([#4129](https://www.github.com/tauri-apps/tauri/pull/4129)) on 2022-05-15
+- Fixes resource bundling on Windows when the resource path includes root or parent directory components.
+  - [787ea09a](https://www.github.com/tauri-apps/tauri/commit/787ea09adc40644b89926e2b629261065141d16c) fix: generate windows resource directories using resource_relpath, closes [#4087](https://www.github.com/tauri-apps/tauri/pull/4087). ([#4111](https://www.github.com/tauri-apps/tauri/pull/4111)) on 2022-05-13
+- Set the application name when signing the Windows MSI.
+  - [8e1daad1](https://www.github.com/tauri-apps/tauri/commit/8e1daad1537e93c6a969c03328b8502b92bf5b89) fix(bundler): set app name when signing MSI, closes [#3945](https://www.github.com/tauri-apps/tauri/pull/3945) ([#3950](https://www.github.com/tauri-apps/tauri/pull/3950)) on 2022-05-17
+- Change WiX MajorUpgrade element's `Schedule` to `afterInstallExecute` to prevent removal of existing configuration such as the executable's pin to taskbar.
+  - [d965b921](https://www.github.com/tauri-apps/tauri/commit/d965b92174a1e6a01fc1a080254402d52145af1e) fix(bundler): prevent removal of `pin to taskbar` on Windows ([#4144](https://www.github.com/tauri-apps/tauri/pull/4144)) on 2022-05-17
+- Change the MSI reinstall mode so it only reinstall missing or different version files.
+  - [1948ae53](https://www.github.com/tauri-apps/tauri/commit/1948ae53fdcd0ef99ef302066792d779a62c5065) fix(bundler): only reinstall missing or != version files, closes [#4122](https://www.github.com/tauri-apps/tauri/pull/4122) ([#4125](https://www.github.com/tauri-apps/tauri/pull/4125)) on 2022-05-15
+- Allow configuring the display options for the MSI execution allowing quieter updates.
+  - [9f2c3413](https://www.github.com/tauri-apps/tauri/commit/9f2c34131952ea83c3f8e383bc3cec7e1450429f) feat(core): configure msiexec display options, closes [#3951](https://www.github.com/tauri-apps/tauri/pull/3951) ([#4061](https://www.github.com/tauri-apps/tauri/pull/4061)) on 2022-05-15
+
+## \[1.0.0-rc.6]
+
+- Remove `Settings::verbose` option. You may now bring your own `log` frontend to receive logging output from the bundler while remaining in control of verbosity and formatting.
+  - [35f21471](https://www.github.com/tauri-apps/tauri/commit/35f2147161e6697cbd2824681eeaf870b5a991c2) feat(cli): Improve CLI logging ([#4060](https://www.github.com/tauri-apps/tauri/pull/4060)) on 2022-05-07
+- Ignore errors when loading `icns` files in the `.deb` package generation.
+  - [de444b15](https://www.github.com/tauri-apps/tauri/commit/de444b15d222a65861b099a7536318bad000110e) fix(bundler): debian failing to load icns icon, closes [#3062](https://www.github.com/tauri-apps/tauri/pull/3062) ([#4009](https://www.github.com/tauri-apps/tauri/pull/4009)) on 2022-04-30
+- Fix app downgrades when using the Windows installer.
+  - [72e577dc](https://www.github.com/tauri-apps/tauri/commit/72e577dcc6a6733182059ab51b28a03c6077edc1) fix(bundler): properly reinstall files on MSI downgrades, closes [#3868](https://www.github.com/tauri-apps/tauri/pull/3868) ([#4044](https://www.github.com/tauri-apps/tauri/pull/4044)) on 2022-05-04
+
+## \[1.0.0-rc.5]
+
+- Set the Debian control file `Priority` field to `optional`.
+  - [3bd3d923](https://www.github.com/tauri-apps/tauri/commit/3bd3d923d32144b4e28f9f597edf74ee422a9b54) fix: add priority field in debian/control ([#3865](https://www.github.com/tauri-apps/tauri/pull/3865)) on 2022-04-20
+- Fixes DLL resource usage on Windows.
+  - [f66bc3c2](https://www.github.com/tauri-apps/tauri/commit/f66bc3c2b8360b8b685dcadeb373852abe43d9e5) fix(bundler): DLL resources, closes [#3948](https://www.github.com/tauri-apps/tauri/pull/3948) ([#3949](https://www.github.com/tauri-apps/tauri/pull/3949)) on 2022-04-23
+- **Breaking change:** Removed the `useBootstrapper` option. Use https://github.com/tauri-apps/fix-path-env-rs instead.
+  - [6a5ff08c](https://www.github.com/tauri-apps/tauri/commit/6a5ff08ce9052b656aa40accedfd4315825164a3) refactor: remove bootstrapper, closes [#3786](https://www.github.com/tauri-apps/tauri/pull/3786) ([#3832](https://www.github.com/tauri-apps/tauri/pull/3832)) on 2022-03-31
+
+## \[1.0.0-rc.4]
+
+- Fixes DMG bundling on macOS 12.3.
+  - [348a1ab5](https://www.github.com/tauri-apps/tauri/commit/348a1ab59d2697478a594016016f1fccbf1ac054) fix(bundler): DMG bundling on macOS 12.3 cannot use bless, closes [#3719](https://www.github.com/tauri-apps/tauri/pull/3719) ([#3721](https://www.github.com/tauri-apps/tauri/pull/3721)) on 2022-03-18
+
+## \[1.0.0-rc.3]
+
+- Added `tsp` config option under `tauri > bundle > windows`, which enables Time-Stamp Protocol (RFC 3161) for the timestamping
+  server under code signing on Windows if set to `true`.
+  - [bdd5f7c2](https://www.github.com/tauri-apps/tauri/commit/bdd5f7c2f03af4af8b60a9527e55bb18525d989b) fix: add support for Time-Stamping Protocol for Windows codesigning (fix [#3563](https://www.github.com/tauri-apps/tauri/pull/3563)) ([#3570](https://www.github.com/tauri-apps/tauri/pull/3570)) on 2022-03-07
+- Properly create the updater bundle for all generated Microsoft Installer files.
+  - [6a6f1e7b](https://www.github.com/tauri-apps/tauri/commit/6a6f1e7bf922bc6fa56db2e8e40affbb0849731d) fix(bundler): build updater bundle for all .msi files ([#3520](https://www.github.com/tauri-apps/tauri/pull/3520)) on 2022-02-24
+- Fixes the Microsoft Installer launch path.
+  - [8d699283](https://www.github.com/tauri-apps/tauri/commit/8d699283a4741c83b476fb079dc0333c7bf4f919) fix(bundler): Auto-launch app from install location, closes [#3547](https://www.github.com/tauri-apps/tauri/pull/3547) ([#3553](https://www.github.com/tauri-apps/tauri/pull/3553)) on 2022-02-24
+
+## \[1.0.0-rc.2]
+
+- Fixes sidecar bundling on Windows.
+  - [2ecbed8d](https://www.github.com/tauri-apps/tauri/commit/2ecbed8d59d9e1788170aa87b90ed9556a473425) fix(bundler): sidecar on Windows, closes [#3446](https://www.github.com/tauri-apps/tauri/pull/3446) ([#3482](https://www.github.com/tauri-apps/tauri/pull/3482)) on 2022-02-16
+
+## \[1.0.0-rc.1]
+
+- Change default value for the `freezePrototype` configuration to `false`.
+  - Bumped due to a bump in tauri-utils.
+  - [3a4c0160](https://www.github.com/tauri-apps/tauri/commit/3a4c01606184be762adee055ddac803de0d28527) fix(core): change default `freezePrototype` to false, closes [#3416](https://www.github.com/tauri-apps/tauri/pull/3416) [#3406](https://www.github.com/tauri-apps/tauri/pull/3406) ([#3423](https://www.github.com/tauri-apps/tauri/pull/3423)) on 2022-02-12
+
+## \[1.0.0-rc.0]
+
+- Provide a provider short name for macOS app notarization if your Apple developer account is connected to more than one team.
+  - [8ab8d529](https://www.github.com/tauri-apps/tauri/commit/8ab8d529426b1ed7926daced16a45b077033bfe2) Fix [#3288](https://www.github.com/tauri-apps/tauri/pull/3288): Add provider_short_name for macOS ([#3289](https://www.github.com/tauri-apps/tauri/pull/3289)) on 2022-01-27
+
+- Allow building AppImages on systems without FUSE setup.
+  - [28dd9adb](https://www.github.com/tauri-apps/tauri/commit/28dd9adb266b97db0bf7179268269f8614ce78e8) feat(bundler): support building AppImage without FUSE ([#3259](https://www.github.com/tauri-apps/tauri/pull/3259)) on 2022-01-21
+
+- Fixes AppImage crashes caused by missing WebKit runtime files.
+  - [bec7833a](https://www.github.com/tauri-apps/tauri/commit/bec7833a6c29ed9d1a5ab53e1c2cdd80e66cd272) fix(bundler): bundle additional webkit files. patch absolute paths in libwebkit\*.so files. fixes [#2805](https://www.github.com/tauri-apps/tauri/pull/2805),[#2689](https://www.github.com/tauri-apps/tauri/pull/2689) ([#2940](https://www.github.com/tauri-apps/tauri/pull/2940)) on 2021-12-09
+
+- Initialize the preselected installation path with the location of the previous installation.
+  - [ac1dfd8c](https://www.github.com/tauri-apps/tauri/commit/ac1dfd8c3039d87bef1fa2d815876903d5cc07ae) feat(bundler): initialize msi install path with previous location ([#3158](https://www.github.com/tauri-apps/tauri/pull/3158)) on 2022-01-07
+
+- Replaces usage of the nightly command `RUSTC_BOOTSTRAP=1 rustc -Z unstable-options --print target-spec-json` with the stable command `rustc --print cfg`, improving target triple detection.
+  - [839daec7](https://www.github.com/tauri-apps/tauri/commit/839daec7ab79c3ff2f552dd7579069bc64e83625) fix(bundler): Use `arch` instead of `llvm_target`. fix [#3285](https://www.github.com/tauri-apps/tauri/pull/3285) ([#3286](https://www.github.com/tauri-apps/tauri/pull/3286)) on 2022-02-05
+
+- Fixes a deadlock on the `ResourcePaths` iterator.
+  - [4c1be451](https://www.github.com/tauri-apps/tauri/commit/4c1be451066612862363bc481910bd6c3da1e185) fix(bundler): deadlock on `ResourcePaths` iterator, closes [#3146](https://www.github.com/tauri-apps/tauri/pull/3146) ([#3152](https://www.github.com/tauri-apps/tauri/pull/3152)) on 2022-01-02
+
+- Move the copying of resources and sidecars from `cli.rs` to `tauri-build` so using the Cargo CLI directly processes the files for the application execution in development.
+  - [5eb72c24](https://www.github.com/tauri-apps/tauri/commit/5eb72c24deddf5a01093bea96b90c0d8806afc3f) refactor: copy resources and sidecars on the Cargo build script ([#3357](https://www.github.com/tauri-apps/tauri/pull/3357)) on 2022-02-08
+
+- The minimum Rust version is now `1.56`.
+  - [a9dfc015](https://www.github.com/tauri-apps/tauri/commit/a9dfc015505afe91281c2027954ffcc588b1a59c) feat: update to edition 2021 and set minimum rust to 1.56 ([#2789](https://www.github.com/tauri-apps/tauri/pull/2789)) on 2021-10-22
+
+- **Breaking change:** The sidecar's target triple suffix is now removed at build time.
+  - [3035e458](https://www.github.com/tauri-apps/tauri/commit/3035e4581c161ec7f0bd6d9b42e9015cf1dd1d77) Remove target triple from sidecar bin paths, closes [#3355](https://www.github.com/tauri-apps/tauri/pull/3355) ([#3356](https://www.github.com/tauri-apps/tauri/pull/3356)) on 2022-02-07
+
+- When building Universal macOS Binaries through the virtual target `universal-apple-darwin`:
+
+- Expect a universal binary to be created by the user
+
+- Ensure that binary is bundled and accessed correctly at runtime
+
+- [3035e458](https://www.github.com/tauri-apps/tauri/commit/3035e4581c161ec7f0bd6d9b42e9015cf1dd1d77) Remove target triple from sidecar bin paths, closes [#3355](https://www.github.com/tauri-apps/tauri/pull/3355) ([#3356](https://www.github.com/tauri-apps/tauri/pull/3356)) on 2022-02-07
+
+- Allow setting the localization file for WiX.
+  - [af329f27](https://www.github.com/tauri-apps/tauri/commit/af329f2722d6194c6d70e976fc970dc2c9e4de2b) feat(bundler): wix localization, closes [#3174](https://www.github.com/tauri-apps/tauri/pull/3174) ([#3179](https://www.github.com/tauri-apps/tauri/pull/3179)) on 2022-02-05
+
+- Fix registry keys on the WiX template.
+  - [2be1abd1](https://www.github.com/tauri-apps/tauri/commit/2be1abd112cc3d927c235b6d00a508e6d35be49e) fix(bundler) wix template escape character ([#2608](https://www.github.com/tauri-apps/tauri/pull/2608)) on 2021-09-21
+
+- Configure WiX to add an option to launch the application after finishing setup.
+  - [feb3a8f8](https://www.github.com/tauri-apps/tauri/commit/feb3a8f896802ff274333012c3b399beb5c86f41) feat(bundler): configure WiX to add launch option, closes [#3015](https://www.github.com/tauri-apps/tauri/pull/3015) ([#3043](https://www.github.com/tauri-apps/tauri/pull/3043)) on 2021-12-09
+
+- Sign WiX installer in addition to the executable file.
+  - [d801cc89](https://www.github.com/tauri-apps/tauri/commit/d801cc89b8bfa9beba347ebcd48cfccf890ff5bb) wix installer is also signed ([#3266](https://www.github.com/tauri-apps/tauri/pull/3266)) on 2022-01-23
+
 ## \[1.0.0-beta.4]
 
 - Merge Tauri-generated Info.plist with the contents of `src-tauri/Info.plist` if it exists.

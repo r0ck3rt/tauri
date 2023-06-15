@@ -1,9 +1,14 @@
 {
+  "$schema": "../../../core/tauri-config-schema/schema.json",
   "build": {
     "distDir": ["src/index.html"],
     "devPath": ["src/index.html"],
     "beforeDevCommand": "",
     "beforeBuildCommand": ""
+  },
+  "package": {
+    "productName": "Dynamic Lib",
+    "version": "0.1.0"
   },
   "tauri": {
     "bundle": {
@@ -24,18 +29,12 @@
       "shortDescription": "",
       "longDescription": "",
       "deb": {
-        "depends": [],
-        "useBootstrapper": false
+        "depends": []
       },
       "macOS": {
         "frameworks": [],
-        "minimumSystemVersion": "",
-        "useBootstrapper": false,
         "exceptionDomain": ""
       }
-    },
-    "allowlist": {
-      "all": false
     },
     "windows": [
       {
@@ -48,9 +47,6 @@
     ],
     "security": {
       "csp": "default-src blob: data: filesystem: ws: wss: http: https: tauri: 'unsafe-eval' 'unsafe-inline' 'self'"
-    },
-    "updater": {
-      "active": false
     }
   }
 }

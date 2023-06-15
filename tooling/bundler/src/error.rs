@@ -1,4 +1,5 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2016-2019 Cargo-Bundle developers <https://github.com/burtonageo/cargo-bundle>
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -21,9 +22,6 @@ pub enum Error {
   /// Image error.
   #[error("`{0}`")]
   ImageError(#[from] image::ImageError),
-  /// TOML error.
-  #[error("`{0}`")]
-  TomlError(#[from] toml::de::Error),
   /// Error walking directory.
   #[error("`{0}`")]
   WalkdirError(#[from] walkdir::Error),
@@ -37,7 +35,6 @@ pub enum Error {
   #[error("`{0}`")]
   ZipError(#[from] zip::result::ZipError),
   /// Hex error.
-  #[cfg(target_os = "windows")]
   #[error("`{0}`")]
   HexError(#[from] hex::FromHexError),
   /// Handlebars template error.
@@ -51,9 +48,8 @@ pub enum Error {
   #[error("`{0}`")]
   RegexError(#[from] regex::Error),
   /// Failed to perform HTTP request.
-  #[cfg(windows)]
   #[error("`{0}`")]
-  HttpError(#[from] attohttpc::Error),
+  HttpError(#[from] Box<ureq::Error>),
   /// Invalid glob pattern.
   #[cfg(windows)]
   #[error("{0}")]
@@ -105,7 +101,11 @@ pub enum Error {
   #[cfg(target_os = "macos")]
   #[error("`{0}`")]
   TimeError(#[from] time::error::Error),
+  /// Plist error.
+  #[cfg(target_os = "macos")]
+  #[error(transparent)]
+  Plist(#[from] plist::Error),
 }
 
 /// Convenient type alias of Result type.
-pub type Result<T> = anyhow::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;

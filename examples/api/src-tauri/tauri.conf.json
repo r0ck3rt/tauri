@@ -1,22 +1,17 @@
 {
+  "$schema": "../../../core/tauri-config-schema/schema.json",
   "build": {
     "distDir": "../dist",
-    "devPath": "http://localhost:5000",
+    "devPath": "http://localhost:5173",
     "beforeDevCommand": "yarn dev",
-    "beforeBuildCommand": "yarn build"
+    "beforeBuildCommand": "yarn build",
+    "withGlobalTauri": true
   },
   "package": {
     "productName": "Tauri API",
-    "version": "../package.json"
+    "version": "1.0.0"
   },
-  "tauri": {
-    "pattern": {
-      "use": "isolation",
-      "options": {
-        "dir": "../isolation-dist/"
-      }
-    },
-    "macOSPrivateApi": true,
+  "plugins": {
     "cli": {
       "description": "Tauri API example",
       "args": [
@@ -36,7 +31,6 @@
         {
           "short": "v",
           "name": "verbose",
-          "multipleOccurrences": true,
           "description": "Verbosity level"
         }
       ],
@@ -52,7 +46,16 @@
           ]
         }
       }
+    }
+  },
+  "tauri": {
+    "pattern": {
+      "use": "isolation",
+      "options": {
+        "dir": "../isolation-dist/"
+      }
     },
+    "macOSPrivateApi": true,
     "bundle": {
       "active": true,
       "identifier": "com.tauri.api",
@@ -72,53 +75,36 @@
             }
           }
         }
+      },
+      "updater": {
+        "active": true,
+        "pubkey": "asdasd",
+        "windows": {
+          "installMode": "passive"
+        }
       }
     },
-    "updater": {
-      "active": true,
-      "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5QzMxNjYwNTM5OEUwNTgKUldSWTRKaFRZQmJER1h4d1ZMYVA3dnluSjdpN2RmMldJR09hUFFlZDY0SlFqckkvRUJhZDJVZXAK",
-      "endpoints": [
-        "https://tauri-update-server.vercel.app/update/{{target}}/{{current_version}}"
-      ]
-    },
-    "allowlist": {
-      "all": true,
-      "fs": {
-        "scope": ["$APP/db", "$DOWNLOAD/**", "$RESOURCE/**"]
-      },
-      "shell": {
-        "scope": [
-          {
-            "name": "sh",
-            "cmd": "sh"
-          },
-          {
-            "name": "cmd",
-            "cmd": "cmd"
-          }
-        ]
-      },
-      "protocol": {
-        "asset": true,
-        "assetScope": ["$RESOURCE/**", "$APP/**"]
-      },
-      "http": {
-        "scope": ["https://jsonplaceholder.typicode.com/todos/*"]
-      }
-    },
-    "windows": [
-      {
-        "title": "Tauri API Validation",
-        "transparent": true
-      }
-    ],
+    "windows": [],
     "security": {
-      "csp": "default-src 'self' customprotocol: img-src: 'self'; style-src 'unsafe-inline' 'self' https://fonts.googleapis.com; img-src 'self' asset: https://asset.localhost blob: data:; font-src https://fonts.gstatic.com"
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "font-src": ["https://fonts.gstatic.com"],
+        "img-src": "'self' asset: https://asset.localhost blob: data:",
+        "style-src": "'unsafe-inline' 'self' https://fonts.googleapis.com"
+      },
+      "freezePrototype": true,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["$APPDATA/db/**", "$RESOURCE/**"],
+          "deny": ["$APPDATA/db/*.stronghold"]
+        }
+      }
     },
     "systemTray": {
       "iconPath": "../../.icons/tray_icon_with_transparency.png",
-      "iconAsTemplate": true
+      "iconAsTemplate": true,
+      "menuOnLeftClick": false
     }
   }
 }

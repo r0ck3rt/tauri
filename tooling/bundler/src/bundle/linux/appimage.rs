@@ -1,15 +1,16 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2016-2019 Cargo-Bundle developers <https://github.com/burtonageo/cargo-bundle>
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
 use super::{
-  super::{common, path_utils},
+  super::{common::CommandExt, path_utils},
   debian,
 };
 use crate::Settings;
-
+use anyhow::Context;
 use handlebars::Handlebars;
-
+use log::info;
 use std::{
   collections::BTreeMap,
   fs::{remove_dir_all, write},
@@ -51,9 +52,20 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
 
   // setup data to insert into shell script
   let mut sh_map = BTreeMap::new();
+  sh_map.insert("arch", settings.target().split('-').next().unwrap());
   sh_map.insert("app_name", settings.main_binary_name());
   sh_map.insert("app_name_uppercase", &upcase_app_name);
   sh_map.insert("appimage_filename", &appimage_filename);
+  let tauri_tools_path = dirs_next::cache_dir().map_or_else(
+    || output_path.to_path_buf(),
+    |mut p| {
+      p.push("tauri");
+      p
+    },
+  );
+  std::fs::create_dir_all(&tauri_tools_path)?;
+  let tauri_tools_path_str = tauri_tools_path.to_string_lossy();
+  sh_map.insert("tauri_tools_path", &tauri_tools_path_str);
   let larger_icon = icons
     .iter()
     .filter(|i| i.width == i.height)
@@ -69,6 +81,7 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
 
   // initialize shell script template.
   let mut handlebars = Handlebars::new();
+  handlebars.register_escape_fn(handlebars::no_escape);
   handlebars
     .register_template_string("appimage", include_str!("templates/appimage"))
     .expect("Failed to register template for handlebars");
@@ -76,7 +89,9 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
 
   // create the shell script file in the target/ folder.
   let sh_file = output_path.join("build_appimage.sh");
-  common::print_bundling(appimage_path.file_name().unwrap().to_str().unwrap())?;
+
+  info!(action = "Bundling"; "{} ({})", appimage_filename, appimage_path.display());
+
   write(&sh_file, temp)?;
 
   // chmod script for execution
@@ -90,19 +105,10 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
     .expect("Failed to chmod script");
 
   // execute the shell script to build the appimage.
-  let mut cmd = Command::new(&sh_file);
-  cmd.current_dir(output_path);
-
-  common::execute_with_verbosity(&mut cmd, settings).map_err(|_| {
-    crate::Error::ShellScriptError(format!(
-      "error running appimage.sh{}",
-      if settings.is_verbose() {
-        ""
-      } else {
-        ", try running with --verbose to see command output"
-      }
-    ))
-  })?;
+  Command::new(&sh_file)
+    .current_dir(output_path)
+    .output_ok()
+    .context("error running appimage.sh")?;
 
   remove_dir_all(&package_dir)?;
   Ok(vec![appimage_path])

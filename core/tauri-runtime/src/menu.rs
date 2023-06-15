@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -146,12 +146,16 @@ pub enum MenuUpdate {
   SetNativeImage(NativeImage),
 }
 
-pub trait TrayHandle: fmt::Debug {
+pub trait TrayHandle: fmt::Debug + Clone + Send + Sync {
   fn set_icon(&self, icon: crate::Icon) -> crate::Result<()>;
   fn set_menu(&self, menu: crate::menu::SystemTrayMenu) -> crate::Result<()>;
   fn update_item(&self, id: u16, update: MenuUpdate) -> crate::Result<()>;
   #[cfg(target_os = "macos")]
   fn set_icon_as_template(&self, is_template: bool) -> crate::Result<()>;
+  #[cfg(target_os = "macos")]
+  fn set_title(&self, title: &str) -> crate::Result<()>;
+  fn set_tooltip(&self, tooltip: &str) -> crate::Result<()>;
+  fn destroy(&self) -> crate::Result<()>;
 }
 
 /// A window menu.
@@ -186,9 +190,134 @@ impl Menu {
     Default::default()
   }
 
+  /// Creates a menu filled with default menu items and submenus.
+  ///
+  /// ## Platform-specific:
+  ///
+  /// - **Windows**:
+  ///   - File
+  ///     - CloseWindow
+  ///     - Quit
+  ///   - Edit
+  ///     - Cut
+  ///     - Copy
+  ///     - Paste
+  ///   - Window
+  ///     - Minimize
+  ///     - CloseWindow
+  ///
+  /// - **Linux**:
+  ///   - File
+  ///     - CloseWindow
+  ///     - Quit
+  ///   - Window
+  ///     - Minimize
+  ///     - CloseWindow
+  ///
+  /// - **macOS**:
+  ///   - App
+  ///     - About
+  ///     - Separator
+  ///     - Services
+  ///     - Separator
+  ///     - Hide
+  ///     - HideOthers
+  ///     - ShowAll
+  ///     - Separator
+  ///     - Quit
+  ///   - File
+  ///     - CloseWindow
+  ///   - Edit
+  ///     - Undo
+  ///     - Redo
+  ///     - Separator
+  ///     - Cut
+  ///     - Copy
+  ///     - Paste
+  ///     - SelectAll
+  ///   - View
+  ///     - EnterFullScreen
+  ///   - Window
+  ///     - Minimize
+  ///     - Zoom
+  ///     - Separator
+  ///     - CloseWindow
+  pub fn os_default(#[allow(unused)] app_name: &str) -> Self {
+    let mut menu = Menu::new();
+    #[cfg(target_os = "macos")]
+    {
+      menu = menu.add_submenu(Submenu::new(
+        app_name,
+        Menu::new()
+          .add_native_item(MenuItem::About(
+            app_name.to_string(),
+            AboutMetadata::default(),
+          ))
+          .add_native_item(MenuItem::Separator)
+          .add_native_item(MenuItem::Services)
+          .add_native_item(MenuItem::Separator)
+          .add_native_item(MenuItem::Hide)
+          .add_native_item(MenuItem::HideOthers)
+          .add_native_item(MenuItem::ShowAll)
+          .add_native_item(MenuItem::Separator)
+          .add_native_item(MenuItem::Quit),
+      ));
+    }
+
+    let mut file_menu = Menu::new();
+    file_menu = file_menu.add_native_item(MenuItem::CloseWindow);
+    #[cfg(not(target_os = "macos"))]
+    {
+      file_menu = file_menu.add_native_item(MenuItem::Quit);
+    }
+    menu = menu.add_submenu(Submenu::new("File", file_menu));
+
+    #[cfg(not(target_os = "linux"))]
+    let mut edit_menu = Menu::new();
+    #[cfg(target_os = "macos")]
+    {
+      edit_menu = edit_menu.add_native_item(MenuItem::Undo);
+      edit_menu = edit_menu.add_native_item(MenuItem::Redo);
+      edit_menu = edit_menu.add_native_item(MenuItem::Separator);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+      edit_menu = edit_menu.add_native_item(MenuItem::Cut);
+      edit_menu = edit_menu.add_native_item(MenuItem::Copy);
+      edit_menu = edit_menu.add_native_item(MenuItem::Paste);
+    }
+    #[cfg(target_os = "macos")]
+    {
+      edit_menu = edit_menu.add_native_item(MenuItem::SelectAll);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+      menu = menu.add_submenu(Submenu::new("Edit", edit_menu));
+    }
+    #[cfg(target_os = "macos")]
+    {
+      menu = menu.add_submenu(Submenu::new(
+        "View",
+        Menu::new().add_native_item(MenuItem::EnterFullScreen),
+      ));
+    }
+
+    let mut window_menu = Menu::new();
+    window_menu = window_menu.add_native_item(MenuItem::Minimize);
+    #[cfg(target_os = "macos")]
+    {
+      window_menu = window_menu.add_native_item(MenuItem::Zoom);
+      window_menu = window_menu.add_native_item(MenuItem::Separator);
+    }
+    window_menu = window_menu.add_native_item(MenuItem::CloseWindow);
+    menu = menu.add_submenu(Submenu::new("Window", window_menu));
+
+    menu
+  }
+
   /// Creates a new window menu with the given items.
   ///
-  /// # Example
+  /// # Examples
   /// ```
   /// # use tauri_runtime::menu::{Menu, MenuItem, CustomMenuItem, Submenu};
   /// Menu::with_items([
@@ -396,25 +525,101 @@ impl From<Submenu> for MenuEntry {
   }
 }
 
+/// Application metadata for the [`MenuItem::About`] action.
+///
+/// ## Platform-specific
+///
+/// - **Windows / macOS / Android / iOS:** The metadata is ignored on these platforms.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct AboutMetadata {
+  /// The application name.
+  pub version: Option<String>,
+  /// The authors of the application.
+  pub authors: Option<Vec<String>>,
+  /// Application comments.
+  pub comments: Option<String>,
+  /// The copyright of the application.
+  pub copyright: Option<String>,
+  /// The license of the application.
+  pub license: Option<String>,
+  /// The application website.
+  pub website: Option<String>,
+  /// The website label.
+  pub website_label: Option<String>,
+}
+
+impl AboutMetadata {
+  /// Creates the default metadata for the [`MenuItem::About`] action, which is just empty.
+  pub fn new() -> Self {
+    Default::default()
+  }
+
+  /// Defines the application version.
+  pub fn version(mut self, version: impl Into<String>) -> Self {
+    self.version.replace(version.into());
+    self
+  }
+
+  /// Defines the application authors.
+  pub fn authors(mut self, authors: Vec<String>) -> Self {
+    self.authors.replace(authors);
+    self
+  }
+
+  /// Defines the application comments.
+  pub fn comments(mut self, comments: impl Into<String>) -> Self {
+    self.comments.replace(comments.into());
+    self
+  }
+
+  /// Defines the application copyright.
+  pub fn copyright(mut self, copyright: impl Into<String>) -> Self {
+    self.copyright.replace(copyright.into());
+    self
+  }
+
+  /// Defines the application license.
+  pub fn license(mut self, license: impl Into<String>) -> Self {
+    self.license.replace(license.into());
+    self
+  }
+
+  /// Defines the application's website link.
+  pub fn website(mut self, website: impl Into<String>) -> Self {
+    self.website.replace(website.into());
+    self
+  }
+
+  /// Defines the application's website link name.
+  pub fn website_label(mut self, website_label: impl Into<String>) -> Self {
+    self.website_label.replace(website_label.into());
+    self
+  }
+}
+
 /// A menu item, bound to a pre-defined action or `Custom` emit an event. Note that status bar only
 /// supports `Custom` menu item variants. And on the menu bar, some platforms might not support some
 /// of the variants. Unsupported variant will be no-op on such platform.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum MenuItem {
-  /// Shows a standard "About" item
+  /// Shows a standard "About" item.
+  ///
+  /// The first value is the application name, and the second is its metadata.
   ///
   /// ## Platform-specific
   ///
   /// - **Windows / Android / iOS:** Unsupported
+  /// - **Linux:** The metadata is only applied on Linux
   ///
-  About(String),
+  About(String, AboutMetadata),
 
   /// A standard "hide the app" menu item.
   ///
   /// ## Platform-specific
   ///
-  /// - **Windows / Android / iOS:** Unsupported
+  /// - **Android / iOS:** Unsupported
   ///
   Hide,
 
@@ -446,7 +651,7 @@ pub enum MenuItem {
   ///
   /// ## Platform-specific
   ///
-  /// - **Windows / Android / iOS:** Unsupported
+  /// - **Android / iOS:** Unsupported
   ///
   CloseWindow,
 
@@ -454,7 +659,7 @@ pub enum MenuItem {
   ///
   /// ## Platform-specific
   ///
-  /// - **Windows / Android / iOS:** Unsupported
+  /// - **Android / iOS:** Unsupported
   ///
   Quit,
 
@@ -462,7 +667,7 @@ pub enum MenuItem {
   ///
   /// ## Platform-specific
   ///
-  /// - **Windows / Android / iOS:** Unsupported
+  /// - **Android / iOS / Linux:** Unsupported
   ///
   Copy,
 
@@ -470,7 +675,7 @@ pub enum MenuItem {
   ///
   /// ## Platform-specific
   ///
-  /// - **Windows / Android / iOS:** Unsupported
+  /// - **Android / iOS / Linux:** Unsupported
   ///
   Cut,
 
@@ -496,7 +701,7 @@ pub enum MenuItem {
   ///
   /// ## Platform-specific
   ///
-  /// - **Windows / Android / iOS:** Unsupported
+  /// - **Windows / Android / iOS / Linux:** Unsupported
   ///
   SelectAll,
 
@@ -504,7 +709,7 @@ pub enum MenuItem {
   ///
   /// ## Platform-specific
   ///
-  /// - **Windows / Android / iOS:** Unsupported
+  /// - **Android / iOS / Linux:** Unsupported
   ///
   Paste,
 
@@ -520,7 +725,7 @@ pub enum MenuItem {
   ///
   /// ## Platform-specific
   ///
-  /// - **Windows / Android / iOS:** Unsupported
+  /// - **Android / iOS:** Unsupported
   ///
   Minimize,
 
@@ -536,7 +741,7 @@ pub enum MenuItem {
   ///
   /// ## Platform-specific
   ///
-  /// - **Windows / Android / iOS:** Unsupported
+  /// - **Android / iOS:** Unsupported
   ///
   Separator,
 }

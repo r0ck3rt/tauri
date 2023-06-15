@@ -1,19 +1,21 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2016-2019 Cargo-Bundle developers <https://github.com/burtonageo/cargo-bundle>
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-use crate::{CommandExt, Settings};
+use log::debug;
+
 use std::{
   ffi::OsStr,
   fs::{self, File},
-  io::{self, BufWriter, Write},
+  io::{self, BufReader, BufWriter},
   path::Path,
-  process::Command,
+  process::{Command, ExitStatus, Output, Stdio},
+  sync::{Arc, Mutex},
 };
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
-/// Returns true if the path has a filename indicating that it is a high-desity
-/// "retina" icon.  Specifically, returns true the the file stem ends with
+/// Returns true if the path has a filename indicating that it is a high-density
+/// "retina" icon.  Specifically, returns true the file stem ends with
 /// "@2x" (a convention specified by the [Apple developer docs](
 /// https://developer.apple.com/library/mac/documentation/GraphicsAnimation/Conceptual/HighResolutionOSX/Optimizing/Optimizing.html)).
 #[allow(dead_code)]
@@ -30,7 +32,7 @@ pub fn is_retina<P: AsRef<Path>>(path: P) -> bool {
 /// needed.
 pub fn create_file(path: &Path) -> crate::Result<BufWriter<File>> {
   if let Some(parent) = path.parent() {
-    fs::create_dir_all(&parent)?;
+    fs::create_dir_all(parent)?;
   }
   let file = File::create(path)?;
   Ok(BufWriter::new(file))
@@ -70,14 +72,12 @@ pub fn copy_file(from: impl AsRef<Path>, to: impl AsRef<Path>) -> crate::Result<
   let to = to.as_ref();
   if !from.exists() {
     return Err(crate::Error::GenericError(format!(
-      "{:?} does not exist",
-      from
+      "{from:?} does not exist"
     )));
   }
   if !from.is_file() {
     return Err(crate::Error::GenericError(format!(
-      "{:?} is not a file",
-      from
+      "{from:?} is not a file"
     )));
   }
   let dest_dir = to.parent().expect("No data in parent");
@@ -94,20 +94,17 @@ pub fn copy_file(from: impl AsRef<Path>, to: impl AsRef<Path>) -> crate::Result<
 pub fn copy_dir(from: &Path, to: &Path) -> crate::Result<()> {
   if !from.exists() {
     return Err(crate::Error::GenericError(format!(
-      "{:?} does not exist",
-      from
+      "{from:?} does not exist"
     )));
   }
   if !from.is_dir() {
     return Err(crate::Error::GenericError(format!(
-      "{:?} is not a Directory",
-      from
+      "{from:?} is not a Directory"
     )));
   }
   if to.exists() {
     return Err(crate::Error::GenericError(format!(
-      "{:?} already exists",
-      from
+      "{from:?} already exists"
     )));
   }
   let parent = to.parent().expect("No data in parent");
@@ -133,78 +130,82 @@ pub fn copy_dir(from: &Path, to: &Path) -> crate::Result<()> {
   Ok(())
 }
 
-/// Prints a message to stderr, in the same format that `cargo` uses,
-/// indicating that we are creating a bundle with the given filename.
-pub fn print_bundling(filename: &str) -> crate::Result<()> {
-  print_progress("Bundling", filename)
+pub trait CommandExt {
+  // The `pipe` function sets the stdout and stderr to properly
+  // show the command output in the Node.js wrapper.
+  fn piped(&mut self) -> std::io::Result<ExitStatus>;
+  fn output_ok(&mut self) -> crate::Result<Output>;
 }
 
-/// Prints a message to stderr, in the same format that `cargo` uses,
-/// indicating that we have finished the the given bundles.
-pub fn print_finished(bundles: &[crate::bundle::Bundle]) -> crate::Result<()> {
-  let pluralised = if bundles.len() == 1 {
-    "bundle"
-  } else {
-    "bundles"
-  };
-  let msg = format!("{} {} at:", bundles.len(), pluralised);
-  print_progress("Finished", &msg)?;
-  for bundle in bundles {
-    for path in &bundle.bundle_paths {
-      let mut note = "";
-      if bundle.package_type == crate::PackageType::Updater {
-        note = " (updater)";
+impl CommandExt for Command {
+  fn piped(&mut self) -> std::io::Result<ExitStatus> {
+    self.stdout(os_pipe::dup_stdout()?);
+    self.stderr(os_pipe::dup_stderr()?);
+    let program = self.get_program().to_string_lossy().into_owned();
+    debug!(action = "Running"; "Command `{} {}`", program, self.get_args().map(|arg| arg.to_string_lossy()).fold(String::new(), |acc, arg| format!("{acc} {arg}")));
+
+    self.status().map_err(Into::into)
+  }
+
+  fn output_ok(&mut self) -> crate::Result<Output> {
+    let program = self.get_program().to_string_lossy().into_owned();
+    debug!(action = "Running"; "Command `{} {}`", program, self.get_args().map(|arg| arg.to_string_lossy()).fold(String::new(), |acc, arg| format!("{acc} {arg}")));
+
+    self.stdout(Stdio::piped());
+    self.stderr(Stdio::piped());
+
+    let mut child = self.spawn()?;
+
+    let mut stdout = child.stdout.take().map(BufReader::new).unwrap();
+    let stdout_lines = Arc::new(Mutex::new(Vec::new()));
+    let stdout_lines_ = stdout_lines.clone();
+    std::thread::spawn(move || {
+      let mut buf = Vec::new();
+      let mut lines = stdout_lines_.lock().unwrap();
+      loop {
+        buf.clear();
+        match tauri_utils::io::read_line(&mut stdout, &mut buf) {
+          Ok(s) if s == 0 => break,
+          _ => (),
+        }
+        debug!(action = "stdout"; "{}", String::from_utf8_lossy(&buf));
+        lines.extend(buf.clone());
+        lines.push(b'\n');
       }
-      println!("        {}{}", path.display(), note,);
+    });
+
+    let mut stderr = child.stderr.take().map(BufReader::new).unwrap();
+    let stderr_lines = Arc::new(Mutex::new(Vec::new()));
+    let stderr_lines_ = stderr_lines.clone();
+    std::thread::spawn(move || {
+      let mut buf = Vec::new();
+      let mut lines = stderr_lines_.lock().unwrap();
+      loop {
+        buf.clear();
+        match tauri_utils::io::read_line(&mut stderr, &mut buf) {
+          Ok(s) if s == 0 => break,
+          _ => (),
+        }
+        debug!(action = "stderr"; "{}", String::from_utf8_lossy(&buf));
+        lines.extend(buf.clone());
+        lines.push(b'\n');
+      }
+    });
+
+    let status = child.wait()?;
+    let output = Output {
+      status,
+      stdout: std::mem::take(&mut *stdout_lines.lock().unwrap()),
+      stderr: std::mem::take(&mut *stderr_lines.lock().unwrap()),
+    };
+
+    if output.status.success() {
+      Ok(output)
+    } else {
+      Err(crate::Error::GenericError(format!(
+        "failed to run {program}"
+      )))
     }
-  }
-  Ok(())
-}
-
-/// Prints a formatted bundle progress to stderr.
-fn print_progress(step: &str, msg: &str) -> crate::Result<()> {
-  let mut output = StandardStream::stderr(ColorChoice::Always);
-  let _ = output.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true));
-  write!(output, "    {}", step)?;
-  output.reset()?;
-  writeln!(output, " {}", msg)?;
-  output.flush()?;
-  Ok(())
-}
-
-/// Prints a warning message to stderr, in the same format that `cargo` uses.
-#[allow(dead_code)]
-pub fn print_warning(message: &str) -> crate::Result<()> {
-  let mut output = StandardStream::stderr(ColorChoice::Always);
-  let _ = output.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)).set_bold(true));
-  write!(output, "warning:")?;
-  output.reset()?;
-  writeln!(output, " {}", message)?;
-  output.flush()?;
-  Ok(())
-}
-
-/// Prints a Info message to stderr.
-pub fn print_info(message: &str) -> crate::Result<()> {
-  let mut output = StandardStream::stderr(ColorChoice::Always);
-  let _ = output.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true));
-  write!(output, "info:")?;
-  output.reset()?;
-  writeln!(output, " {}", message)?;
-  output.flush()?;
-  Ok(())
-}
-
-pub fn execute_with_verbosity(cmd: &mut Command, settings: &Settings) -> crate::Result<()> {
-  if settings.is_verbose() {
-    cmd.pipe()?;
-  }
-  let status = cmd.status().expect("failed to spawn command");
-
-  if status.success() {
-    Ok(())
-  } else {
-    Err(anyhow::anyhow!("command failed").into())
   }
 }
 

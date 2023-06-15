@@ -1,23 +1,17 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
 //! Types and functions related to file operations.
 
-mod extract;
-mod file_move;
-
 use std::{fs, path::Path};
 
-pub use extract::*;
-pub use file_move::*;
-
-/// Reads a string file.
+/// Reads the entire contents of a file into a string.
 pub fn read_string<P: AsRef<Path>>(file: P) -> crate::api::Result<String> {
   fs::read_to_string(file).map_err(Into::into)
 }
 
-/// Reads a binary file.
+/// Reads the entire contents of a file into a bytes vector.
 pub fn read_binary<P: AsRef<Path>>(file: P) -> crate::api::Result<Vec<u8>> {
   fs::read(file).map_err(Into::into)
 }
@@ -25,6 +19,7 @@ pub fn read_binary<P: AsRef<Path>>(file: P) -> crate::api::Result<Vec<u8>> {
 #[cfg(test)]
 mod test {
   use super::*;
+  #[cfg(not(windows))]
   use crate::api::Error;
 
   #[test]
@@ -48,9 +43,8 @@ mod test {
 
     assert!(res.is_err());
 
+    #[cfg(not(windows))]
     if let Error::Io(e) = res.unwrap_err() {
-      #[cfg(windows)]
-      assert_eq!(e.to_string(), "Access is denied. (os error 5)".to_string());
       #[cfg(not(windows))]
       assert_eq!(e.to_string(), "Is a directory (os error 21)".to_string());
     }
@@ -60,15 +54,9 @@ mod test {
   fn check_read_binary() {
     let file = String::from("test/api/test_binary");
 
-    #[cfg(windows)]
     let expected_vec = vec![
-      35, 33, 47, 98, 105, 110, 47, 98, 97, 115, 104, 13, 10, 13, 10, 101, 99, 104, 111, 32, 34,
-      72, 101, 108, 108, 111, 32, 116, 104, 101, 114, 101, 34,
-    ];
-    #[cfg(not(windows))]
-    let expected_vec = vec![
-      35, 33, 47, 98, 105, 110, 47, 98, 97, 115, 104, 10, 10, 101, 99, 104, 111, 32, 34, 72, 101,
-      108, 108, 111, 32, 116, 104, 101, 114, 101, 34,
+      71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 255, 255, 255, 0, 0, 0, 33, 249, 4, 1, 0, 0,
+      0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1, 0, 59,
     ];
 
     let res = read_binary(file);

@@ -1,33 +1,24 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-#![cfg_attr(
-  all(not(debug_assertions), target_os = "windows"),
-  windows_subsystem = "windows"
-)]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
   use tauri::{
-    api::{
-      path::{resolve_path, BaseDirectory},
-      process::{Command, CommandEvent},
-    },
+    process::{Command, CommandEvent},
     Manager,
   };
-  let context = tauri::generate_context!();
-  let script_path = resolve_path(
-    context.config(),
-    context.package_info(),
-    &Default::default(),
-    "assets/index.js",
-    Some(BaseDirectory::Resource),
-  )
-  .unwrap();
+
   tauri::Builder::default()
     .setup(move |app| {
       let window = app.get_window("main").unwrap();
-      let script_path = script_path.to_string_lossy().to_string();
+      let script_path = app
+        .path_resolver()
+        .resolve_resource("assets/index.js")
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
       tauri::async_runtime::spawn(async move {
         let (mut rx, _child) = Command::new("node")
           .args(&[script_path])
@@ -46,6 +37,6 @@ fn main() {
 
       Ok(())
     })
-    .run(context)
+    .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

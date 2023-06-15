@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -29,7 +29,11 @@ pub fn external_binaries(external_binaries: &[String], target_triple: &str) -> V
       "{}-{}{}",
       curr_path,
       target_triple,
-      if cfg!(windows) { ".exe" } else { "" }
+      if target_triple.contains("windows") {
+        ".exe"
+      } else {
+        ""
+      }
     ));
   }
   paths

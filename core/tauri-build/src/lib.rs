@@ -1,16 +1,30 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
 #![cfg_attr(doc_cfg, feature(doc_cfg))]
 
+use anyhow::Context;
 pub use anyhow::Result;
-use tauri_utils::resources::{external_binaries, resource_relpath, ResourcePaths};
+use cargo_toml::Manifest;
+use heck::AsShoutySnakeCase;
 
-use std::path::{Path, PathBuf};
+use tauri_utils::{
+  config::Config,
+  resources::{external_binaries, resource_relpath, ResourcePaths},
+};
 
+use std::{
+  env::var_os,
+  path::{Path, PathBuf},
+};
+
+mod allowlist;
 #[cfg(feature = "codegen")]
 mod codegen;
+/// Mobile build functions.
+pub mod mobile;
+mod static_vcruntime;
 
 #[cfg(feature = "codegen")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "codegen")))]
@@ -25,20 +39,38 @@ fn copy_file(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> {
   if !from.is_file() {
     return Err(anyhow::anyhow!("{:?} is not a file", from));
   }
+  let dest_dir = to.parent().expect("No data in parent");
+  std::fs::create_dir_all(dest_dir)?;
   std::fs::copy(from, to)?;
   Ok(())
 }
 
-fn copy_binaries<'a>(binaries: ResourcePaths<'a>, target_triple: &str, path: &Path) -> Result<()> {
+fn copy_binaries(
+  binaries: ResourcePaths,
+  target_triple: &str,
+  path: &Path,
+  package_name: Option<&String>,
+) -> Result<()> {
   for src in binaries {
     let src = src?;
-    let dest = path.join(
-      src
-        .file_name()
-        .expect("failed to extract external binary filename")
-        .to_string_lossy()
-        .replace(&format!("-{}", target_triple), ""),
-    );
+    println!("cargo:rerun-if-changed={}", src.display());
+    let file_name = src
+      .file_name()
+      .expect("failed to extract external binary filename")
+      .to_string_lossy()
+      .replace(&format!("-{target_triple}"), "");
+
+    if package_name.map_or(false, |n| n == &file_name) {
+      return Err(anyhow::anyhow!(
+        "Cannot define a sidecar with the same name as the Cargo package name `{}`. Please change the sidecar name in the filesystem and the Tauri configuration.",
+        file_name
+      ));
+    }
+
+    let dest = path.join(file_name);
+    if dest.exists() {
+      std::fs::remove_file(&dest).unwrap();
+    }
     copy_file(&src, &dest)?;
   }
   Ok(())
@@ -48,30 +80,62 @@ fn copy_binaries<'a>(binaries: ResourcePaths<'a>, target_triple: &str, path: &Pa
 fn copy_resources(resources: ResourcePaths<'_>, path: &Path) -> Result<()> {
   for src in resources {
     let src = src?;
+    println!("cargo:rerun-if-changed={}", src.display());
     let dest = path.join(resource_relpath(&src));
-    copy_file(&src, &dest)?;
+    copy_file(&src, dest)?;
   }
   Ok(())
 }
 
-/// Attributes used on Windows.
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct WindowsAttributes {
-  window_icon_path: PathBuf,
-  /// The path to the sdk location. This can be a absolute or relative path. If not supplied
-  /// this defaults to whatever `winres` crate determines is the best. See the
-  /// [winres documentation](https://docs.rs/winres/*/winres/struct.WindowsResource.html#method.set_toolkit_path)
-  sdk_dir: Option<PathBuf>,
+// checks if the given Cargo feature is enabled.
+fn has_feature(feature: &str) -> bool {
+  // when a feature is enabled, Cargo sets the `CARGO_FEATURE_<name` env var to 1
+  // https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-sets-for-build-scripts
+  std::env::var(format!("CARGO_FEATURE_{}", AsShoutySnakeCase(feature)))
+    .map(|x| x == "1")
+    .unwrap_or(false)
 }
 
-impl Default for WindowsAttributes {
-  fn default() -> Self {
-    Self {
-      window_icon_path: PathBuf::from("icons/icon.ico"),
-      sdk_dir: None,
-    }
+// creates a cfg alias if `has_feature` is true.
+// `alias` must be a snake case string.
+fn cfg_alias(alias: &str, has_feature: bool) {
+  if has_feature {
+    println!("cargo:rustc-cfg={alias}");
   }
+}
+
+/// Attributes used on Windows.
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+pub struct WindowsAttributes {
+  window_icon_path: Option<PathBuf>,
+  /// A string containing an [application manifest] to be included with the application on Windows.
+  ///
+  /// Defaults to:
+  /// ```text
+  #[doc = include_str!("window-app-manifest.xml")]
+  /// ```
+  ///
+  /// ## Warning
+  ///
+  /// if you are using tauri's dialog APIs, you need to specify a dependency on Common Control v6 by adding the following to your custom manifest:
+  /// ```text
+  ///  <dependency>
+  ///    <dependentAssembly>
+  ///      <assemblyIdentity
+  ///        type="win32"
+  ///        name="Microsoft.Windows.Common-Controls"
+  ///        version="6.0.0.0"
+  ///        processorArchitecture="*"
+  ///        publicKeyToken="6595b64144ccf1df"
+  ///        language="*"
+  ///      />
+  ///    </dependentAssembly>
+  ///  </dependency>
+  /// ```
+  ///
+  /// [application manifest]: https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests
+  app_manifest: Option<String>,
 }
 
 impl WindowsAttributes {
@@ -84,15 +148,66 @@ impl WindowsAttributes {
   /// It must be in `ico` format. Defaults to `icons/icon.ico`.
   #[must_use]
   pub fn window_icon_path<P: AsRef<Path>>(mut self, window_icon_path: P) -> Self {
-    self.window_icon_path = window_icon_path.as_ref().into();
+    self
+      .window_icon_path
+      .replace(window_icon_path.as_ref().into());
     self
   }
 
-  /// Sets the sdk dir for windows. Currently only used on Windows. This must be a vaild UTF-8
-  /// path. Defaults to whatever the `winres` crate determines is best.
+  /// Sets the [application manifest] to be included with the application on Windows.
+  ///
+  /// Defaults to:
+  /// ```text
+  #[doc = include_str!("window-app-manifest.xml")]
+  /// ```
+  ///
+  /// ## Warning
+  ///
+  /// if you are using tauri's dialog APIs, you need to specify a dependency on Common Control v6 by adding the following to your custom manifest:
+  /// ```text
+  ///  <dependency>
+  ///    <dependentAssembly>
+  ///      <assemblyIdentity
+  ///        type="win32"
+  ///        name="Microsoft.Windows.Common-Controls"
+  ///        version="6.0.0.0"
+  ///        processorArchitecture="*"
+  ///        publicKeyToken="6595b64144ccf1df"
+  ///        language="*"
+  ///      />
+  ///    </dependentAssembly>
+  ///  </dependency>
+  /// ```
+  ///
+  /// # Example
+  ///
+  /// The following manifest will brand the exe as requesting administrator privileges.
+  /// Thus, everytime it is executed, a Windows UAC dialog will appear.
+  ///
+  /// ```rust,no_run
+  /// let mut windows = tauri_build::WindowsAttributes::new();
+  /// windows = windows.app_manifest(r#"
+  /// <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  ///   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+  ///       <security>
+  ///           <requestedPrivileges>
+  ///               <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+  ///           </requestedPrivileges>
+  ///       </security>
+  ///   </trustInfo>
+  /// </assembly>
+  /// "#);
+  /// let attrs =  tauri_build::Attributes::new().windows_attributes(windows);
+  /// tauri_build::try_build(attrs).expect("failed to run build script");
+  /// ```
+  ///
+  /// Note that you can move the manifest contents to a separate file and use `include_str!("manifest.xml")`
+  /// instead of the inline string.
+  ///
+  /// [manifest]: https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests
   #[must_use]
-  pub fn sdk_dir<P: AsRef<Path>>(mut self, sdk_dir: P) -> Self {
-    self.sdk_dir = Some(sdk_dir.as_ref().into());
+  pub fn app_manifest<S: AsRef<str>>(mut self, manifest: S) -> Self {
+    self.app_manifest = Some(manifest.as_ref().to_string());
     self
   }
 }
@@ -139,7 +254,15 @@ impl Attributes {
 /// This is typically desirable when running inside a build script; see [`try_build`] for no panics.
 pub fn build() {
   if let Err(error) = try_build(Attributes::default()) {
-    panic!("error found during tauri-build: {}", error);
+    let error = format!("{error:#}");
+    println!("{error}");
+    if error.starts_with("unknown field") {
+      print!("found an unknown configuration field. This usually means that you are using a CLI version that is newer than `tauri-build` and is incompatible. ");
+      println!(
+        "Please try updating the Rust crates by running `cargo update` in the Tauri app folder."
+      );
+    }
+    std::process::exit(1);
   }
 }
 
@@ -147,78 +270,69 @@ pub fn build() {
 #[allow(unused_variables)]
 pub fn try_build(attributes: Attributes) -> Result<()> {
   use anyhow::anyhow;
-  use cargo_toml::{Dependency, Manifest};
-  use tauri_utils::config::{Config, TauriConfig};
 
-  println!("cargo:rerun-if-changed=src/Cargo.toml");
+  println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
   println!("cargo:rerun-if-changed=tauri.conf.json");
   #[cfg(feature = "config-json5")]
   println!("cargo:rerun-if-changed=tauri.conf.json5");
+  #[cfg(feature = "config-toml")]
+  println!("cargo:rerun-if-changed=Tauri.toml");
 
-  let config: Config = if let Ok(env) = std::env::var("TAURI_CONFIG") {
-    serde_json::from_str(&env)?
-  } else {
-    serde_json::from_value(tauri_utils::config::parse::read_from(
-      std::env::current_dir().unwrap(),
-    )?)?
-  };
+  let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+  let mobile = target_os == "ios" || target_os == "android";
+  cfg_alias("desktop", !mobile);
+  cfg_alias("mobile", mobile);
 
-  let mut manifest = Manifest::from_path("Cargo.toml")?;
-  if let Some(tauri) = manifest.dependencies.remove("tauri") {
-    let features = match tauri {
-      Dependency::Simple(_) => Vec::new(),
-      Dependency::Detailed(dep) => dep.features,
-    };
+  let mut config = serde_json::from_value(tauri_utils::config::parse::read_from(
+    std::env::current_dir().unwrap(),
+  )?)?;
+  if let Ok(env) = std::env::var("TAURI_CONFIG") {
+    let merge_config: serde_json::Value = serde_json::from_str(&env)?;
+    json_patch::merge(&mut config, &merge_config);
+  }
+  let config: Config = serde_json::from_value(config)?;
 
-    let all_cli_managed_features = TauriConfig::all_features();
-    let diff = features_diff(
-      &features
-        .into_iter()
-        .filter(|f| all_cli_managed_features.contains(&f.as_str()))
-        .collect::<Vec<String>>(),
-      &config
-        .tauri
-        .features()
-        .into_iter()
-        .map(|f| f.to_string())
-        .collect::<Vec<String>>(),
-    );
-
-    let mut error_message = String::new();
-    if !diff.remove.is_empty() {
-      error_message.push_str("remove the `");
-      error_message.push_str(&diff.remove.join(", "));
-      error_message.push_str(if diff.remove.len() == 1 {
-        "` feature"
-      } else {
-        "` features"
-      });
-      if !diff.add.is_empty() {
-        error_message.push_str(" and ");
-      }
-    }
-    if !diff.add.is_empty() {
-      error_message.push_str("add the `");
-      error_message.push_str(&diff.add.join(", "));
-      error_message.push_str(if diff.add.len() == 1 {
-        "` feature"
-      } else {
-        "` features"
-      });
-    }
-
-    if !error_message.is_empty() {
-      return Err(anyhow!("
-      The `tauri` dependency features on the `Cargo.toml` file does not match the allowlist defined under `tauri.conf.json`.
-      Please run `tauri dev` or `tauri build` or {}.
-    ", error_message));
+  let s = config.tauri.bundle.identifier.split('.');
+  let last = s.clone().count() - 1;
+  let mut android_package_prefix = String::new();
+  for (i, w) in s.enumerate() {
+    if i == 0 || i != last {
+      android_package_prefix.push_str(w);
+      android_package_prefix.push('_');
     }
   }
+  android_package_prefix.pop();
+  println!("cargo:rustc-env=TAURI_ANDROID_PACKAGE_PREFIX={android_package_prefix}");
+
+  if let Some(project_dir) = var_os("TAURI_ANDROID_PROJECT_PATH").map(PathBuf::from) {
+    mobile::generate_gradle_files(project_dir)?;
+  }
+
+  cfg_alias("dev", !has_feature("custom-protocol"));
+
+  let ws_path = get_workspace_dir()?;
+  let mut manifest =
+    Manifest::<cargo_toml::Value>::from_slice_with_metadata(&std::fs::read("Cargo.toml")?)?;
+
+  if let Ok(ws_manifest) = Manifest::from_path(ws_path.join("Cargo.toml")) {
+    Manifest::complete_from_path_and_workspace(
+      &mut manifest,
+      Path::new("Cargo.toml"),
+      Some((&ws_manifest, ws_path.as_path())),
+    )?;
+  } else {
+    Manifest::complete_from_path(&mut manifest, Path::new("Cargo.toml"))?;
+  }
+
+  allowlist::check(&config, &mut manifest)?;
 
   let target_triple = std::env::var("TARGET").unwrap();
-  let out_dir = std::env::var("OUT_DIR").unwrap();
+
+  println!("cargo:rustc-env=TAURI_TARGET_TRIPLE={target_triple}");
+
+  let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
   // TODO: far from ideal, but there's no other way to get the target dir, see <https://github.com/rust-lang/cargo/issues/5457>
-  let target_dir = Path::new(&out_dir)
+  let target_dir = out_dir
     .parent()
     .unwrap()
     .parent()
@@ -226,124 +340,148 @@ pub fn try_build(attributes: Attributes) -> Result<()> {
     .parent()
     .unwrap();
 
-  if let Some(paths) = config.tauri.bundle.external_bin {
+  if let Some(paths) = &config.tauri.bundle.external_bin {
     copy_binaries(
-      ResourcePaths::new(external_binaries(&paths, &target_triple).as_slice(), true),
+      ResourcePaths::new(external_binaries(paths, &target_triple).as_slice(), true),
       &target_triple,
       target_dir,
+      manifest.package.as_ref().map(|p| &p.name),
     )?;
   }
-  if let Some(paths) = config.tauri.bundle.resources {
-    copy_resources(ResourcePaths::new(paths.as_slice(), true), target_dir)?;
+
+  #[allow(unused_mut, clippy::redundant_clone)]
+  let mut resources = config.tauri.bundle.resources.clone().unwrap_or_default();
+  if target_triple.contains("windows") {
+    if let Some(fixed_webview2_runtime_path) =
+      &config.tauri.bundle.windows.webview_fixed_runtime_path
+    {
+      resources.push(fixed_webview2_runtime_path.display().to_string());
+    }
+  }
+  copy_resources(ResourcePaths::new(resources.as_slice(), true), target_dir)?;
+
+  if target_triple.contains("darwin") {
+    if let Some(version) = &config.tauri.bundle.macos.minimum_system_version {
+      println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET={version}");
+    }
   }
 
-  #[cfg(windows)]
-  {
-    use anyhow::Context;
-    use winres::WindowsResource;
+  if target_triple.contains("windows") {
+    use semver::Version;
+    use tauri_winres::{VersionInfo, WindowsResource};
 
-    let icon_path_string = attributes
+    fn find_icon<F: Fn(&&String) -> bool>(config: &Config, predicate: F, default: &str) -> PathBuf {
+      let icon_path = config
+        .tauri
+        .bundle
+        .icon
+        .iter()
+        .find(|i| predicate(i))
+        .cloned()
+        .unwrap_or_else(|| default.to_string());
+      icon_path.into()
+    }
+
+    let window_icon_path = attributes
       .windows_attributes
       .window_icon_path
-      .to_string_lossy()
-      .into_owned();
+      .unwrap_or_else(|| find_icon(&config, |i| i.ends_with(".ico"), "icons/icon.ico"));
 
-    if attributes.windows_attributes.window_icon_path.exists() {
-      let mut res = WindowsResource::new();
-      if let Some(sdk_dir) = &attributes.windows_attributes.sdk_dir {
-        if let Some(sdk_dir_str) = sdk_dir.to_str() {
-          res.set_toolkit_path(sdk_dir_str);
+    if target_triple.contains("windows") {
+      if window_icon_path.exists() {
+        let mut res = WindowsResource::new();
+
+        if let Some(manifest) = attributes.windows_attributes.app_manifest {
+          res.set_manifest(&manifest);
         } else {
-          return Err(anyhow!(
-            "sdk_dir path is not valid; only UTF-8 characters are allowed"
-          ));
+          res.set_manifest(include_str!("window-app-manifest.xml"));
+        }
+
+        if let Some(version_str) = &config.package.version {
+          if let Ok(v) = Version::parse(version_str) {
+            let version = v.major << 48 | v.minor << 32 | v.patch << 16;
+            res.set_version_info(VersionInfo::FILEVERSION, version);
+            res.set_version_info(VersionInfo::PRODUCTVERSION, version);
+          }
+          res.set("FileVersion", version_str);
+          res.set("ProductVersion", version_str);
+        }
+        if let Some(product_name) = &config.package.product_name {
+          res.set("ProductName", product_name);
+        }
+        if let Some(short_description) = &config.tauri.bundle.short_description {
+          res.set("FileDescription", short_description);
+        }
+        if let Some(copyright) = &config.tauri.bundle.copyright {
+          res.set("LegalCopyright", copyright);
+        }
+        res.set_icon_with_id(&window_icon_path.display().to_string(), "32512");
+        res.compile().with_context(|| {
+          format!(
+            "failed to compile `{}` into a Windows Resource file during tauri-build",
+            window_icon_path.display()
+          )
+        })?;
+      } else {
+        return Err(anyhow!(format!(
+          "`{}` not found; required for generating a Windows Resource file during tauri-build",
+          window_icon_path.display()
+        )));
+      }
+    }
+
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap();
+    match target_env.as_str() {
+      "gnu" => {
+        let target_arch = match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
+          "x86_64" => Some("x64"),
+          "x86" => Some("x86"),
+          "aarch64" => Some("arm64"),
+          arch => None,
+        };
+        if let Some(target_arch) = target_arch {
+          for entry in std::fs::read_dir(target_dir.join("build"))? {
+            let path = entry?.path();
+            let webview2_loader_path = path
+              .join("out")
+              .join(target_arch)
+              .join("WebView2Loader.dll");
+            if path.to_string_lossy().contains("webview2-com-sys") && webview2_loader_path.exists()
+            {
+              std::fs::copy(webview2_loader_path, target_dir.join("WebView2Loader.dll"))?;
+              break;
+            }
+          }
         }
       }
-      if let Some(version) = &config.package.version {
-        res.set("FileVersion", version);
-        res.set("ProductVersion", version);
+      "msvc" => {
+        if std::env::var("STATIC_VCRUNTIME").map_or(false, |v| v == "true") {
+          static_vcruntime::build();
+        }
       }
-      if let Some(product_name) = &config.package.product_name {
-        res.set("ProductName", product_name);
-        res.set("FileDescription", product_name);
-      }
-      res.set_icon_with_id(&icon_path_string, "32512");
-      res.compile().with_context(|| {
-        format!(
-          "failed to compile `{}` into a Windows Resource file during tauri-build",
-          icon_path_string
-        )
-      })?;
-    } else {
-      return Err(anyhow!(format!(
-        "`{}` not found; required for generating a Windows Resource file during tauri-build",
-        icon_path_string
-      )));
+      _ => (),
     }
   }
 
   Ok(())
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
-struct Diff {
-  remove: Vec<String>,
-  add: Vec<String>,
+#[derive(serde::Deserialize)]
+struct CargoMetadata {
+  workspace_root: PathBuf,
 }
 
-fn features_diff(current: &[String], expected: &[String]) -> Diff {
-  let mut remove = Vec::new();
-  let mut add = Vec::new();
-  for feature in current {
-    if !expected.contains(feature) {
-      remove.push(feature.clone());
-    }
+fn get_workspace_dir() -> Result<PathBuf> {
+  let output = std::process::Command::new("cargo")
+    .args(["metadata", "--no-deps", "--format-version", "1"])
+    .output()?;
+
+  if !output.status.success() {
+    return Err(anyhow::anyhow!(
+      "cargo metadata command exited with a non zero exit code: {}",
+      String::from_utf8(output.stderr)?
+    ));
   }
 
-  for feature in expected {
-    if !current.contains(feature) {
-      add.push(feature.clone());
-    }
-  }
-
-  Diff { remove, add }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::Diff;
-
-  #[test]
-  fn array_diff() {
-    for (current, expected, result) in [
-      (vec![], vec![], Default::default()),
-      (
-        vec!["a".into()],
-        vec![],
-        Diff {
-          remove: vec!["a".into()],
-          add: vec![],
-        },
-      ),
-      (vec!["a".into()], vec!["a".into()], Default::default()),
-      (
-        vec!["a".into(), "b".into()],
-        vec!["a".into()],
-        Diff {
-          remove: vec!["b".into()],
-          add: vec![],
-        },
-      ),
-      (
-        vec!["a".into(), "b".into()],
-        vec!["a".into(), "c".into()],
-        Diff {
-          remove: vec!["b".into()],
-          add: vec!["c".into()],
-        },
-      ),
-    ] {
-      assert_eq!(super::features_diff(&current, &expected), result);
-    }
-  }
+  Ok(serde_json::from_slice::<CargoMetadata>(&output.stdout)?.workspace_root)
 }

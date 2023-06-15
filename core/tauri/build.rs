@@ -1,103 +1,153 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-use cfg_aliases::cfg_aliases;
+use heck::AsShoutySnakeCase;
+
+use once_cell::sync::OnceCell;
+
+use std::env::var_os;
+use std::fs::read_dir;
+use std::fs::read_to_string;
+use std::fs::write;
+use std::{
+  env::var,
+  path::{Path, PathBuf},
+  sync::Mutex,
+};
+
+static CHECKED_FEATURES: OnceCell<Mutex<Vec<String>>> = OnceCell::new();
+
+// checks if the given Cargo feature is enabled.
+fn has_feature(feature: &str) -> bool {
+  CHECKED_FEATURES
+    .get_or_init(Default::default)
+    .lock()
+    .unwrap()
+    .push(feature.to_string());
+
+  // when a feature is enabled, Cargo sets the `CARGO_FEATURE_<name>` env var to 1
+  // https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-sets-for-build-scripts
+  std::env::var(format!("CARGO_FEATURE_{}", AsShoutySnakeCase(feature)))
+    .map(|x| x == "1")
+    .unwrap_or(false)
+}
+
+// creates a cfg alias if `has_feature` is true.
+// `alias` must be a snake case string.
+fn alias(alias: &str, has_feature: bool) {
+  if has_feature {
+    println!("cargo:rustc-cfg={alias}");
+  }
+}
 
 fn main() {
-  cfg_aliases! {
-    custom_protocol: { feature = "custom-protocol" },
-    dev: { not(feature = "custom-protocol") },
+  alias("custom_protocol", has_feature("custom-protocol"));
+  alias("dev", !has_feature("custom-protocol"));
 
-    api_all: { feature = "api-all" },
+  let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+  let mobile = target_os == "ios" || target_os == "android";
+  alias("desktop", !mobile);
+  alias("mobile", mobile);
 
-    // fs
-    fs_all: { any(api_all, feature = "fs-all") },
-    fs_read_file: { any(fs_all, feature = "fs-read-file") },
-    fs_write_file: { any(fs_all, feature = "fs-write-file") },
-    fs_write_binary_file: { any(fs_all, feature = "fs-write-binary-file") },
-    fs_read_dir: { any(fs_all, feature = "fs-read-dir") },
-    fs_copy_file: { any(fs_all, feature = "fs-copy-file") },
-    fs_create_dir: { any(fs_all, feature = "fs-create_dir") },
-    fs_remove_dir: { any(fs_all, feature = "fs-remove-dir") },
-    fs_remove_file: { any(fs_all, feature = "fs-remove-file") },
-    fs_rename_file: { any(fs_all, feature = "fs-rename-file") },
+  let checked_features_out_path = Path::new(&var("OUT_DIR").unwrap()).join("checked_features");
+  std::fs::write(
+    checked_features_out_path,
+    CHECKED_FEATURES.get().unwrap().lock().unwrap().join(","),
+  )
+  .expect("failed to write checked_features file");
 
-    // window
-    window_all: { any(api_all, feature = "window-all") },
-    window_create: { any(window_all, feature = "window-create") },
-    window_center: { any(window_all, feature = "window-center") },
-    window_request_user_attention: { any(window_all, feature = "window-request-user-attention") },
-    window_set_resizable: { any(window_all, feature = "window-set-resizable") },
-    window_set_title: { any(window_all, feature = "window-set-title") },
-    window_maximize: { any(window_all, feature = "window-maximize") },
-    window_unmaximize: { any(window_all, feature = "window-unmaximize") },
-    window_minimize: { any(window_all, feature = "window-minimize") },
-    window_unminimize: { any(window_all, feature = "window-unminimize") },
-    window_show: { any(window_all, feature = "window-show") },
-    window_hide: { any(window_all, feature = "window-hide") },
-    window_close: { any(window_all, feature = "window-close") },
-    window_set_decorations: { any(window_all, feature = "window-set-decorations") },
-    window_set_always_on_top: { any(window_all, feature = "window-set-always-on-top") },
-    window_set_size: { any(window_all, feature = "window-set-size") },
-    window_set_min_size: { any(window_all, feature = "window-set-min-size") },
-    window_set_max_size: { any(window_all, feature = "window-set-max-size") },
-    window_set_position: { any(window_all, feature = "window-set-position") },
-    window_set_fullscreen: { any(window_all, feature = "window-set-fullscreen") },
-    window_set_focus: { any(window_all, feature = "window-set-focus") },
-    window_set_icon: { any(window_all, feature = "window-set-icon") },
-    window_set_skip_taskbar: { any(window_all, feature = "window-set-skip-taskbar") },
-    window_start_dragging: { any(window_all, feature = "window-start-dragging") },
-    window_print: { any(window_all, feature = "window-print") },
-
-    // shell
-    shell_all: { any(api_all, feature = "shell-all") },
-    shell_execute: { any(shell_all, feature = "shell-execute") },
-    shell_sidecar: { any(shell_all, feature = "shell-sidecar") },
-    shell_open: { any(shell_all, feature = "shell-open") },
-    // helper for the shell scope functionality
-    shell_scope: { any(shell_execute, shell_sidecar, feature = "shell-open-api") },
-
-    // dialog
-    dialog_all: { any(api_all, feature = "dialog-all") },
-    dialog_open: { any(dialog_all, feature = "dialog-open") },
-    dialog_save: { any(dialog_all, feature = "dialog-save") },
-    dialog_message: { any(dialog_all, feature = "dialog-message") },
-    dialog_ask: { any(dialog_all, feature = "dialog-ask") },
-    dialog_confirm: { any(dialog_all, feature = "dialog-confirm") },
-
-    // http
-    http_all: { any(api_all, feature = "http-all") },
-    http_request: { any(http_all, feature = "http-request") },
-
-    // cli
-    cli: { feature = "cli" },
-
-    // notification
-    notification_all: { any(api_all, feature = "notification-all") },
-
-    // global shortcut
-    global_shortcut_all: { any(api_all, feature = "global_shortcut-all") },
-
-    // os
-    os_all: { any(api_all, feature = "os-all") },
-
-    // path
-    path_all: { any(api_all, feature = "path-all") },
-
-    // protocol
-    protocol_all: { any(api_all, feature = "protocol-all") },
-    protocol_asset: { any(protocol_all, feature = "protocol-asset") },
-
-    // process
-    process_all: { any(api_all, feature = "process-all") },
-    process_relaunch: { any(protocol_all, feature = "process-relaunch") },
-    process_relaunch_dangerous_allow_symlink_macos: { feature = "process-relaunch-dangerous-allow-symlink-macos" },
-    process_exit: { any(protocol_all, feature = "process-exit") },
-
-    // clipboard
-    clipboard_all: { any(api_all, feature = "clipboard-all") },
-    clipboard_write_text: { any(protocol_all, feature = "clipboard-write-text") },
-    clipboard_read_text: { any(protocol_all, feature = "clipboard-read-text") },
+  // workaround needed to prevent `STATUS_ENTRYPOINT_NOT_FOUND` error
+  // see https://github.com/tauri-apps/tauri/pull/4383#issuecomment-1212221864
+  let target_env = std::env::var("CARGO_CFG_TARGET_ENV");
+  let is_tauri_workspace = std::env::var("__TAURI_WORKSPACE__").map_or(false, |v| v == "true");
+  if is_tauri_workspace && target_os == "windows" && Ok("msvc") == target_env.as_deref() {
+    add_manifest();
   }
+
+  if target_os == "android" {
+    if let Ok(kotlin_out_dir) = std::env::var("WRY_ANDROID_KOTLIN_FILES_OUT_DIR") {
+      fn env_var(var: &str) -> String {
+        std::env::var(var).unwrap_or_else(|_| {
+          panic!(
+            "`{}` is not set, which is needed to generate the kotlin files for android.",
+            var
+          )
+        })
+      }
+
+      let package = env_var("WRY_ANDROID_PACKAGE");
+      let library = env_var("WRY_ANDROID_LIBRARY");
+
+      let kotlin_out_dir = PathBuf::from(&kotlin_out_dir)
+        .canonicalize()
+        .unwrap_or_else(move |_| {
+          panic!("Failed to canonicalize `WRY_ANDROID_KOTLIN_FILES_OUT_DIR` path {kotlin_out_dir}")
+        });
+
+      let kotlin_files_path =
+        PathBuf::from(env_var("CARGO_MANIFEST_DIR")).join("mobile/android-codegen");
+      println!("cargo:rerun-if-changed={}", kotlin_files_path.display());
+      let kotlin_files =
+        read_dir(kotlin_files_path).expect("failed to read Android codegen directory");
+
+      for file in kotlin_files {
+        let file = file.unwrap();
+
+        let content = read_to_string(file.path())
+          .expect("failed to read kotlin file as string")
+          .replace("{{package}}", &package)
+          .replace("{{library}}", &library);
+
+        let out_path = kotlin_out_dir.join(file.file_name());
+        write(&out_path, content).expect("Failed to write kotlin file");
+        println!("cargo:rerun-if-changed={}", out_path.display());
+      }
+    }
+
+    if let Some(project_dir) = var_os("TAURI_ANDROID_PROJECT_PATH").map(PathBuf::from) {
+      let tauri_proguard = include_str!("./mobile/proguard-tauri.pro").replace(
+        "$PACKAGE",
+        &var("WRY_ANDROID_PACKAGE").expect("missing `WRY_ANDROID_PACKAGE` environment variable"),
+      );
+      std::fs::write(
+        project_dir.join("app").join("proguard-tauri.pro"),
+        tauri_proguard,
+      )
+      .expect("failed to write proguard-tauri.pro");
+    }
+
+    let lib_path =
+      PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("mobile/android");
+    println!("cargo:android_library_path={}", lib_path.display());
+  }
+
+  #[cfg(target_os = "macos")]
+  {
+    if target_os == "ios" {
+      let lib_path =
+        PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("mobile/ios-api");
+      tauri_build::mobile::link_swift_library("Tauri", &lib_path);
+      println!("cargo:ios_library_path={}", lib_path.display());
+    }
+  }
+}
+
+fn add_manifest() {
+  static WINDOWS_MANIFEST_FILE: &str = "window-app-manifest.xml";
+
+  let manifest = std::env::current_dir()
+    .unwrap()
+    .join("../tauri-build/src")
+    .join(WINDOWS_MANIFEST_FILE);
+
+  println!("cargo:rerun-if-changed={}", manifest.display());
+  // Embed the Windows application manifest file.
+  println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+  println!(
+    "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
+    manifest.to_str().unwrap()
+  );
+  // Turn linker warnings into errors.
+  println!("cargo:rustc-link-arg=/WX");
 }

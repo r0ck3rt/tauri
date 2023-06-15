@@ -1,15 +1,16 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
 use crate::{
   command::{CommandArg, CommandItem},
-  runtime::Runtime,
-  InvokeError,
+  InvokeError, Runtime,
 };
 use state::Container;
 
 /// A guard for a state value.
+///
+/// See [`Manager::manage`](`crate::Manager::manage`) for usage examples.
 pub struct State<'r, T: Send + Sync + 'static>(&'r T);
 
 impl<'r, T: Send + Sync + 'static> State<'r, T> {
@@ -37,12 +38,18 @@ impl<T: Send + Sync + 'static> Clone for State<'_, T> {
   }
 }
 
+impl<'r, T: Send + Sync + std::fmt::Debug> std::fmt::Debug for State<'r, T> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_tuple("State").field(&self.0).finish()
+  }
+}
+
 impl<'r, 'de: 'r, T: Send + Sync + 'static, R: Runtime> CommandArg<'de, R> for State<'r, T> {
   /// Grabs the [`State`] from the [`CommandItem`]. This will never fail.
   fn from_command(command: CommandItem<'de, R>) -> Result<Self, InvokeError> {
     Ok(command.message.state_ref().try_get().unwrap_or_else(|| {
       panic!(
-        "state not managed for field `{}` on command `{}`. You muse call `.manage()` before using this command",
+        "state not managed for field `{}` on command `{}`. You must call `.manage()` before using this command",
         command.key, command.name
       )
     }))
@@ -64,6 +71,7 @@ impl StateManager {
 
   /// Gets the state associated with the specified type.
   pub fn get<T: Send + Sync + 'static>(&self) -> State<'_, T> {
+    self.0.get::<T>();
     State(
       self
         .0

@@ -1,10 +1,13 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
-use crate::runtime::{
-  menu::{MenuHash, MenuId, MenuIdRef, MenuUpdate},
-  Dispatch, Runtime,
+use crate::{
+  runtime::{
+    menu::{MenuHash, MenuId, MenuIdRef, MenuUpdate},
+    Dispatch,
+  },
+  Runtime,
 };
 
 use tauri_macros::default_runtime;
@@ -64,7 +67,9 @@ impl<R: Runtime> Clone for MenuItemHandle<R> {
 impl<R: Runtime> MenuHandle<R> {
   /// Gets a handle to the menu item that has the specified `id`.
   pub fn get_item(&self, id: MenuIdRef<'_>) -> MenuItemHandle<R> {
-    for (raw, item_id) in self.ids.lock().unwrap().iter() {
+    let ids = self.ids.lock().unwrap();
+    let iter = ids.iter();
+    for (raw, item_id) in iter {
       if item_id == id {
         return MenuItemHandle {
           id: *raw,
@@ -73,6 +78,20 @@ impl<R: Runtime> MenuHandle<R> {
       }
     }
     panic!("item id not found")
+  }
+
+  /// Attempts to get a handle to the menu item that has the specified `id`, return an error if `id` is not found.
+  pub fn try_get_item(&self, id: MenuIdRef<'_>) -> Option<MenuItemHandle<R>> {
+    self
+      .ids
+      .lock()
+      .unwrap()
+      .iter()
+      .find(|i| i.1 == id)
+      .map(|i| MenuItemHandle {
+        id: *i.0,
+        dispatcher: self.dispatcher.clone(),
+      })
   }
 
   /// Shows the menu.

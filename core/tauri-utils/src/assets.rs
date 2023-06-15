@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -144,8 +144,12 @@ impl Assets for EmbeddedAssets {
     self
       .assets
       .get(key.as_ref())
-      .copied()
-      .map(zstd::decode_all)
+      .map(|&(mut asdf)| {
+        // with the exception of extremely small files, output should usually be
+        // at least as large as the compressed version.
+        let mut buf = Vec::with_capacity(asdf.len());
+        brotli::BrotliDecompress(&mut asdf, &mut buf).map(|()| buf)
+      })
       .and_then(Result::ok)
       .map(Cow::Owned)
   }
@@ -170,8 +174,7 @@ impl Assets for EmbeddedAssets {
             .get(html_path.as_ref())
             .copied()
             .into_iter()
-            .flatten()
-            .into_iter(),
+            .flatten(),
         )
         .copied(),
     )

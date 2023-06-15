@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -68,7 +68,9 @@ impl StartingBinary {
         ancestor
           .symlink_metadata()
           .as_ref()
-          .map(std::fs::Metadata::is_symlink),
+          .map(std::fs::Metadata::file_type)
+          .as_ref()
+          .map(std::fs::FileType::is_symlink),
         Ok(true)
       )
     })

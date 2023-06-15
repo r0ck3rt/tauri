@@ -1,47 +1,65 @@
 [package]
 name = "tauri-utils"
-version = "1.0.0-beta.3"
-authors = [ "Tauri Programme within The Commons Conservancy" ]
-license = "Apache-2.0 OR MIT"
-homepage = "https://tauri.studio"
-repository = "https://github.com/tauri-apps/tauri"
+version = "2.0.0-alpha.5"
 description = "Utilities for Tauri"
-edition = "2021"
-rust-version = "1.57"
-exclude = [ ".license_template", "CHANGELOG.md", "/target" ]
+exclude = [ "CHANGELOG.md", "/target" ]
 readme = "README.md"
 
+# workspace defined package items
+authors = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+
 [dependencies]
-serde = { version = "1.0", features = [ "derive" ] }
-serde_json = "1.0"
-thiserror = "1.0.30"
+serde = { version = "1", features = [ "derive" ] }
+serde_json = "1"
+thiserror = "1"
 phf = { version = "0.10", features = [ "macros" ] }
-zstd = { version = "0.10", optional = true }
-url = { version = "2.2", features = [ "serde" ] }
+brotli = { version = "3", optional = true, default-features = false, features = [ "std" ] }
+url = { version = "2", features = [ "serde" ] }
 kuchiki = "0.8"
 html5ever = "0.25"
-proc-macro2 = { version = "1.0", optional = true }
-quote = { version = "1.0", optional = true }
-schemars = { version = "0.8", features = ["url"], optional = true }
-serde_with = "1.12"
-aes-gcm = { version = "0.9", optional = true }
-ring = { version = "0.16", optional = true, features = ["std"] }
-once_cell = { version = "1.9", optional = true }
-serialize-to-javascript = "=0.1.1"
+proc-macro2 = { version = "1", optional = true }
+quote = { version = "1", optional = true }
+schemars = { version = "0.8", features = [ "url" ], optional = true }
+serde_with = "3"
+aes-gcm = { version = "0.10", optional = true }
+getrandom = { version = "0.2", optional = true, features = [ "std" ] }
+serialize-to-javascript = { version = "=0.1.1", optional = true }
 ctor = "0.1"
 json5 = { version = "0.4", optional = true }
-json-patch = "0.2"
-glob = { version = "0.3.0", optional = true }
+toml = { version = "0.5", optional = true }
+json-patch = "1.0"
+glob = { version = "0.3", optional = true }
 walkdir = { version = "2", optional = true }
+memchr = "2"
+semver = "1"
+infer = "0.12"
+dunce = "1"
 
 [target."cfg(target_os = \"linux\")".dependencies]
 heck = "0.4"
 
+[target."cfg(windows)".dependencies.windows]
+version = "0.44.0"
+features = [
+  "implement",
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_SystemInformation"
+]
+
 [features]
 build = [ "proc-macro2", "quote" ]
-compression = [ "zstd" ]
-schema = ["schemars"]
-isolation = [ "aes-gcm", "ring", "once_cell" ]
-process-relaunch-dangerous-allow-symlink-macos = []
+compression = [ "brotli" ]
+schema = [ "schemars" ]
+isolation = [ "aes-gcm", "getrandom", "serialize-to-javascript" ]
+process-relaunch-dangerous-allow-symlink-macos = [ ]
 config-json5 = [ "json5" ]
+config-toml = [ "toml" ]
 resources = [ "glob", "walkdir" ]

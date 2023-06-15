@@ -1,4 +1,4 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -13,4 +13,11 @@
  * @module
  */
 
-export * from './bundle'
+import * as event from './event'
+import * as tauri from './tauri'
+import * as path from './path'
+
+/** @ignore */
+const invoke = tauri.invoke
+
+export { invoke, event, path, tauri }

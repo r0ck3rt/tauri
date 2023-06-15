@@ -1,4 +1,5 @@
-// Copyright 2019-2021 Tauri Programme within The Commons Conservancy
+// Copyright 2016-2019 Cargo-Bundle developers <https://github.com/burtonageo/cargo-bundle>
+// Copyright 2019-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-License-Identifier: MIT
 
@@ -14,18 +15,6 @@
 //!   - Appimage and Debian packages
 //! - Windows
 //!   - MSI using WiX
-
-pub(crate) trait CommandExt {
-  fn pipe(&mut self) -> Result<&mut Self>;
-}
-
-impl CommandExt for std::process::Command {
-  fn pipe(&mut self) -> Result<&mut Self> {
-    self.stdout(os_pipe::dup_stdout()?);
-    self.stderr(os_pipe::dup_stderr()?);
-    Ok(self)
-  }
-}
 
 /// The bundle API.
 pub mod bundle;
