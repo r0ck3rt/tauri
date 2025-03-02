@@ -1303,6 +1303,7 @@ pub enum WebviewMessage {
   WebviewEvent(WebviewEvent),
   SynthesizedWindowEvent(SynthesizedWindowEvent),
   Navigate(Url),
+  Reload,
   Print,
   Close,
   Show,
@@ -1462,6 +1463,17 @@ impl<T: UserEvent> WebviewDispatch<T> for WryWebviewDispatcher<T> {
         *self.window_id.lock().unwrap(),
         self.webview_id,
         WebviewMessage::Navigate(url),
+      ),
+    )
+  }
+
+  fn reload(&self) -> Result<()> {
+    send_user_message(
+      &self.context,
+      Message::Webview(
+        *self.window_id.lock().unwrap(),
+        self.webview_id,
+        WebviewMessage::Reload,
       ),
     )
   }
@@ -3305,6 +3317,11 @@ fn handle_user_message<T: UserEvent>(
           WebviewMessage::Navigate(url) => {
             if let Err(e) = webview.load_url(url.as_str()) {
               log::error!("failed to navigate to url {}: {}", url, e);
+            }
+          }
+          WebviewMessage::Reload => {
+            if let Err(e) = webview.reload() {
+              log::error!("failed to reload: {e}");
             }
           }
           WebviewMessage::Show => {
