@@ -483,6 +483,11 @@ impl WindowBuilder for MockWindowBuilder {
   }
 
   #[cfg(target_os = "macos")]
+  fn traffic_light_position<P: Into<Position>>(self, position: P) -> Self {
+    self
+  }
+
+  #[cfg(target_os = "macos")]
   fn hidden_title(self, transparent: bool) -> Self {
     self
   }
@@ -1011,6 +1016,10 @@ impl<T: UserEvent> WindowDispatch<T> for MockWindowDispatcher {
   }
 
   fn set_title_bar_style(&self, style: tauri_utils::TitleBarStyle) -> Result<()> {
+    Ok(())
+  }
+
+  fn set_traffic_light_position(&self, position: Position) -> Result<()> {
     Ok(())
   }
 
