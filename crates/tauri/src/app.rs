@@ -42,7 +42,8 @@ use std::{
   borrow::Cow,
   collections::HashMap,
   fmt,
-  sync::{mpsc::Sender, Arc, MutexGuard},
+  sync::{mpsc::Sender, Arc, Mutex, MutexGuard},
+  thread::ThreadId,
 };
 
 use crate::{event::EventId, runtime::RuntimeHandle, Event, EventTarget};
@@ -73,14 +74,19 @@ pub const RESTART_EXIT_CODE: i32 = i32::MAX;
 
 /// Api exposed on the `ExitRequested` event.
 #[derive(Debug, Clone)]
-pub struct ExitRequestApi(Sender<ExitRequestedEventAction>);
+pub struct ExitRequestApi {
+  tx: Sender<ExitRequestedEventAction>,
+  code: Option<i32>,
+}
 
 impl ExitRequestApi {
   /// Prevents the app from exiting.
   ///
   /// **Note:** This is ignored when using [`AppHandle#method.restart`].
   pub fn prevent_exit(&self) {
-    self.0.send(ExitRequestedEventAction::Prevent).unwrap();
+    if self.code != Some(RESTART_EXIT_CODE) {
+      self.tx.send(ExitRequestedEventAction::Prevent).unwrap();
+    }
   }
 }
 
@@ -339,6 +345,12 @@ impl<R: Runtime> AssetResolver<R> {
 pub struct AppHandle<R: Runtime> {
   pub(crate) runtime_handle: R::Handle,
   pub(crate) manager: Arc<AppManager<R>>,
+  event_loop: Arc<Mutex<EventLoop>>,
+}
+
+#[derive(Debug)]
+struct EventLoop {
+  main_thread_id: ThreadId,
 }
 
 /// APIs specific to the wry runtime.
@@ -428,6 +440,7 @@ impl<R: Runtime> Clone for AppHandle<R> {
     Self {
       runtime_handle: self.runtime_handle.clone(),
       manager: self.manager.clone(),
+      event_loop: self.event_loop.clone(),
     }
   }
 }
@@ -522,10 +535,27 @@ impl<R: Runtime> AppHandle<R> {
     }
   }
 
-  /// Restarts the app by triggering [`RunEvent::ExitRequested`] with code [`RESTART_EXIT_CODE`] and [`RunEvent::Exit`]..
+  /// Restarts the app by triggering [`RunEvent::ExitRequested`] with code [`RESTART_EXIT_CODE`](crate::RESTART_EXIT_CODE) and [`RunEvent::Exit`].
+  ///
+  /// When this function is called on the main thread, we cannot guarantee the delivery of those events,
+  /// so we skip them and directly restart the process.
   pub fn restart(&self) -> ! {
-    if self.runtime_handle.request_exit(RESTART_EXIT_CODE).is_err() {
+    if self.event_loop.lock().unwrap().main_thread_id == std::thread::current().id() {
+      log::debug!("restart triggered on the main thread");
       self.cleanup_before_exit();
+      self.manager.notify_event_loop_exit();
+    } else {
+      log::debug!("restart triggered from a separate thread");
+      // we're running on a separate thread, so we must trigger the exit request and wait for it to finish
+      match self.runtime_handle.request_exit(RESTART_EXIT_CODE) {
+        Ok(()) => {
+          let _impede = self.manager.wait_for_event_loop_exit();
+        }
+        Err(e) => {
+          log::error!("failed to request exit: {e}");
+          self.cleanup_before_exit();
+        }
+      }
     }
     crate::process::restart(&self.env());
   }
@@ -1125,6 +1155,9 @@ impl<R: Runtime> App<R> {
   pub fn run<F: FnMut(&AppHandle<R>, RunEvent) + 'static>(mut self, mut callback: F) {
     let app_handle = self.handle().clone();
     let manager = self.manager.clone();
+
+    app_handle.event_loop.lock().unwrap().main_thread_id = std::thread::current().id();
+
     self.runtime.take().unwrap().run(move |event| match event {
       RuntimeRunEvent::Ready => {
         if let Err(e) = setup(&mut self) {
@@ -1137,6 +1170,7 @@ impl<R: Runtime> App<R> {
         let event = on_event_loop_event(&app_handle, RuntimeRunEvent::Exit, &manager);
         callback(&app_handle, event);
         app_handle.cleanup_before_exit();
+        manager.notify_event_loop_exit();
       }
       _ => {
         let event = on_event_loop_event(&app_handle, event, &manager);
@@ -1177,6 +1211,8 @@ impl<R: Runtime> App<R> {
         panic!("Failed to setup app: {e}");
       }
     }
+
+    app_handle.event_loop.lock().unwrap().main_thread_id = std::thread::current().id();
 
     self.runtime.as_mut().unwrap().run_iteration(move |event| {
       let event = on_event_loop_event(&app_handle, event, &manager);
@@ -2016,6 +2052,9 @@ tauri::Builder::default()
       handle: AppHandle {
         runtime_handle,
         manager,
+        event_loop: Arc::new(Mutex::new(EventLoop {
+          main_thread_id: std::thread::current().id(),
+        })),
       },
       ran_setup: false,
     };
@@ -2207,7 +2246,7 @@ fn on_event_loop_event<R: Runtime>(
     RuntimeRunEvent::Exit => RunEvent::Exit,
     RuntimeRunEvent::ExitRequested { code, tx } => RunEvent::ExitRequested {
       code,
-      api: ExitRequestApi(tx),
+      api: ExitRequestApi { tx, code },
     },
     RuntimeRunEvent::WindowEvent { label, event } => RunEvent::WindowEvent {
       label,
