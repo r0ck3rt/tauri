@@ -39,17 +39,12 @@ impl FromStr for BundleFormat {
 impl ValueEnum for BundleFormat {
   fn value_variants<'a>() -> &'a [Self] {
     static VARIANTS: OnceLock<Vec<BundleFormat>> = OnceLock::new();
-    VARIANTS.get_or_init(|| {
-      PackageType::all()
-        .iter()
-        .filter(|t| **t != PackageType::Updater)
-        .map(|t| Self(*t))
-        .collect()
-    })
+    VARIANTS.get_or_init(|| PackageType::all().iter().map(|t| Self(*t)).collect())
   }
 
   fn to_possible_value(&self) -> Option<PossibleValue> {
-    Some(PossibleValue::new(self.0.short_name()))
+    let hide = self.0 == PackageType::Updater;
+    Some(PossibleValue::new(self.0.short_name()).hide(hide))
   }
 }
 
@@ -63,8 +58,6 @@ pub struct Options {
   #[clap(short, long)]
   pub debug: bool,
   /// Space or comma separated list of bundles to package.
-  ///
-  /// Note that the `updater` bundle is not automatically added so you must specify it if the updater is enabled.
   #[clap(short, long, action = ArgAction::Append, num_args(0..), value_delimiter = ',')]
   pub bundles: Option<Vec<BundleFormat>>,
   /// JSON strings or path to JSON files to merge with the default configuration file
