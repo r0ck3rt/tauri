@@ -8909,6 +8909,7 @@ name = "tauri-utils"
 version = "2.2.0"
 dependencies = [
  "aes-gcm",
+ "anyhow",
  "brotli",
  "cargo_metadata",
  "ctor",

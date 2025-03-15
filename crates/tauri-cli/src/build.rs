@@ -182,7 +182,7 @@ pub fn setup(
       return Err(anyhow::anyhow!(
           "The configured frontendDist includes the `{:?}` {}. Please isolate your web assets on a separate folder and update `tauri.conf.json > build > frontendDist`.",
           out_folders,
-          if out_folders.len() == 1 { "folder" }else { "folders" }
+          if out_folders.len() == 1 { "folder" } else { "folders" }
         )
       );
     }
