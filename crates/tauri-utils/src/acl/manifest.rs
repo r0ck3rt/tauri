@@ -21,7 +21,7 @@ pub struct DefaultPermission {
   pub version: Option<NonZeroU64>,
 
   /// Human-readable description of what the permission does.
-  /// Tauri convention is to use <h4> headings in markdown content
+  /// Tauri convention is to use `<h4>` headings in markdown content
   /// for Tauri documentation generation purposes.
   pub description: Option<String>,
 
@@ -141,7 +141,8 @@ mod build {
         let v = v.get();
         quote!(::core::num::NonZeroU64::new(#v).unwrap())
       }));
-      let description = opt_str_lit(self.description.as_ref());
+      // Only used in build script and macros, so don't include them in runtime
+      let description = quote! { ::core::option::Option::None };
       let permissions = vec_lit(&self.permissions, str_lit);
       literal_struct!(
         tokens,
@@ -171,8 +172,10 @@ mod build {
         identity,
       );
 
-      let global_scope_schema =
-        opt_lit_owned(self.global_scope_schema.as_ref().map(json_value_lit));
+      // Only used in build script and macros, so don't include them in runtime
+      // let global_scope_schema =
+      //   opt_lit_owned(self.global_scope_schema.as_ref().map(json_value_lit));
+      let global_scope_schema = quote! { ::core::option::Option::None };
 
       literal_struct!(
         tokens,
