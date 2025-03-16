@@ -42,8 +42,9 @@ use std::{
   borrow::Cow,
   collections::HashMap,
   fmt,
-  sync::{mpsc::Sender, Arc, Mutex, MutexGuard},
+  sync::{atomic, mpsc::Sender, Arc, Mutex, MutexGuard},
   thread::ThreadId,
+  time::Duration,
 };
 
 use crate::{event::EventId, runtime::RuntimeHandle, Event, EventTarget};
@@ -539,25 +540,45 @@ impl<R: Runtime> AppHandle<R> {
   ///
   /// When this function is called on the main thread, we cannot guarantee the delivery of those events,
   /// so we skip them and directly restart the process.
+  ///
+  /// If you want to trigger them reliably, use [`Self::request_restart`] instead
   pub fn restart(&self) -> ! {
     if self.event_loop.lock().unwrap().main_thread_id == std::thread::current().id() {
       log::debug!("restart triggered on the main thread");
       self.cleanup_before_exit();
-      self.manager.notify_event_loop_exit();
+      crate::process::restart(&self.env());
     } else {
       log::debug!("restart triggered from a separate thread");
       // we're running on a separate thread, so we must trigger the exit request and wait for it to finish
+      self
+        .manager
+        .restart_on_exit
+        .store(true, atomic::Ordering::Relaxed);
+      // We'll be restarting when we receive the next `RuntimeRunEvent::Exit` event in `App::run` if this call succeed
       match self.runtime_handle.request_exit(RESTART_EXIT_CODE) {
-        Ok(()) => {
-          let _impede = self.manager.wait_for_event_loop_exit();
-        }
+        Ok(()) => loop {
+          std::thread::sleep(Duration::MAX);
+        },
         Err(e) => {
           log::error!("failed to request exit: {e}");
           self.cleanup_before_exit();
+          crate::process::restart(&self.env());
         }
       }
     }
-    crate::process::restart(&self.env());
+  }
+
+  /// Restarts the app by triggering [`RunEvent::ExitRequested`] with code [`RESTART_EXIT_CODE`] and [`RunEvent::Exit`].
+  pub fn request_restart(&self) {
+    self
+      .manager
+      .restart_on_exit
+      .store(true, atomic::Ordering::Relaxed);
+    // We'll be restarting when we receive the next `RuntimeRunEvent::Exit` event in `App::run` if this call succeed
+    if self.runtime_handle.request_exit(RESTART_EXIT_CODE).is_err() {
+      self.cleanup_before_exit();
+      crate::process::restart(&self.env());
+    }
   }
 
   /// Sets the activation policy for the application. It is set to `NSApplicationActivationPolicyRegular` by default.
@@ -1177,7 +1198,9 @@ impl<R: Runtime> App<R> {
         let event = on_event_loop_event(&app_handle, RuntimeRunEvent::Exit, &manager);
         callback(&app_handle, event);
         app_handle.cleanup_before_exit();
-        manager.notify_event_loop_exit();
+        if self.manager.restart_on_exit.load(atomic::Ordering::Relaxed) {
+          crate::process::restart(&self.env());
+        }
       }
       _ => {
         let event = on_event_loop_event(&app_handle, event, &manager);
