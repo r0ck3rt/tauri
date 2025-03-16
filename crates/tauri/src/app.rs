@@ -1139,6 +1139,13 @@ impl<R: Runtime> App<R> {
 
   /// Runs the application.
   ///
+  /// This function never returns. When the application finishes, the process is exited directly using [`std::process::exit`].
+  /// See [`run_return`](Self::run_return) if you need to run code after the application event loop exits.
+  ///
+  /// # Panics
+  ///
+  /// This function will panic if the setup-function supplied in [`Builder::setup`] fails.
+  ///
   /// # Examples
   /// ```,no_run
   /// let app = tauri::Builder::default()
@@ -1179,6 +1186,60 @@ impl<R: Runtime> App<R> {
     });
   }
 
+  /// Runs the application, returning its intended exit code.
+  ///
+  /// ## Platform-specific
+  ///
+  /// - **iOS**: Unsupported. The application will fallback to [`run`](Self::run).
+  ///
+  /// # Panics
+  ///
+  /// This function will panic if the setup-function supplied in [`Builder::setup`] fails.
+  ///
+  /// # Examples
+  /// ```,no_run
+  /// let app = tauri::Builder::default()
+  ///   // on an actual app, remove the string argument
+  ///   .build(tauri::generate_context!("test/fixture/src-tauri/tauri.conf.json"))
+  ///   .expect("error while building tauri application");
+  /// let exit_code = app
+  ///   .run_return(|_app_handle, event| match event {
+  ///     tauri::RunEvent::ExitRequested { api, .. } => {
+  ///      api.prevent_exit();
+  ///     }
+  ///      _ => {}
+  ///   });
+  ///
+  /// std::process::exit(exit_code);
+  /// ```
+  pub fn run_return<F: FnMut(&AppHandle<R>, RunEvent) + 'static>(mut self, mut callback: F) -> i32 {
+    let manager = self.manager.clone();
+    let app_handle = self.handle().clone();
+
+    self
+      .runtime
+      .take()
+      .unwrap()
+      .run_return(move |event| match event {
+        RuntimeRunEvent::Ready => {
+          if let Err(e) = setup(&mut self) {
+            panic!("Failed to setup app: {e}");
+          }
+          let event = on_event_loop_event(&app_handle, RuntimeRunEvent::Ready, &manager);
+          callback(&app_handle, event);
+        }
+        RuntimeRunEvent::Exit => {
+          let event = on_event_loop_event(&app_handle, RuntimeRunEvent::Exit, &manager);
+          callback(&app_handle, event);
+          app_handle.cleanup_before_exit();
+        }
+        _ => {
+          let event = on_event_loop_event(&app_handle, event, &manager);
+          callback(&app_handle, event);
+        }
+      })
+  }
+
   /// Runs an iteration of the runtime event loop and immediately return.
   ///
   /// Note that when using this API, app cleanup is not automatically done.
@@ -1202,6 +1263,9 @@ impl<R: Runtime> App<R> {
   /// }
   /// ```
   #[cfg(desktop)]
+  #[deprecated(
+    note = "When called in a loop (as suggested by the name), this function will busy-loop. To re-gain control of control flow after the app has exited, use `App::run_return` instead."
+  )]
   pub fn run_iteration<F: FnMut(&AppHandle<R>, RunEvent) + 'static>(&mut self, mut callback: F) {
     let manager = self.manager.clone();
     let app_handle = self.handle().clone();

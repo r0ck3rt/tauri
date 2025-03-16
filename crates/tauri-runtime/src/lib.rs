@@ -458,6 +458,9 @@ pub trait Runtime<T: UserEvent>: Debug + Sized + 'static {
   #[cfg(desktop)]
   fn run_iteration<F: FnMut(RunEvent<T>) + 'static>(&mut self, callback: F);
 
+  /// Equivalent to [`Runtime::run`] but returns the exit code instead of exiting the process.
+  fn run_return<F: FnMut(RunEvent<T>) + 'static>(self, callback: F) -> i32;
+
   /// Run the webview runtime.
   fn run<F: FnMut(RunEvent<T>) + 'static>(self, callback: F);
 }
